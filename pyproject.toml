@@ -11,6 +11,13 @@ dependencies = [
     "uvicorn",
 ]
 
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 
