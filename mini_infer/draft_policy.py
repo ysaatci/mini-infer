@@ -64,7 +64,7 @@ class AdaptiveDraftPolicy:
     per step but longer steps, and how much longer grows with the batch: at high load k = 0 wins.
 
     Acceptance is tracked per request (code is more predictable than stories) as counts shrunk toward
-    the global rate: (accepted + w * global) / (drafted + w). One speculative step's acceptance is very
+    the global rate: (accepted + w * global) / (checked + w). One speculative step's acceptance is very
     noisy (k = 2 gives 0, 0.5 or 1), so a request only moves away from the global rate with evidence. A
     plain moving average let a few unlucky steps make a request look hopeless, and since acceptance is
     only observed while speculating, it never recovered.
@@ -95,7 +95,7 @@ class AdaptiveDraftPolicy:
         self.explore_margin = explore_margin  # explore a k predicted within this fraction of the best
         self._decisions_made = 0
         self.global_acceptance = prior_acceptance
-        self.counts: dict[str, tuple[int, int]] = {}  # per request: (accepted, drafted)
+        self.counts: dict[str, tuple[int, int]] = {}  # per request: (accepted, checked) drafts
         self.step_seconds: dict[tuple[int, int], float] = {}  # (k, batch bucket) -> moving average
         self.force_k: int | None = None  # calibration pins k to measure each one
         self._calibration: dict[tuple[int, int], list[float]] = {}
@@ -151,17 +151,21 @@ class AdaptiveDraftPolicy:
         self.step_seconds[key] = seconds if previous is None else self._blend(previous, seconds)
 
     def request_acceptance(self, seq_id: str) -> float:
-        accepted, drafted = self.counts.get(seq_id, (0, 0))
-        return (accepted + self.prior_weight * self.global_acceptance) / (drafted + self.prior_weight)
+        accepted, checked = self.counts.get(seq_id, (0, 0))
+        return (accepted + self.prior_weight * self.global_acceptance) / (checked + self.prior_weight)
 
     def record_acceptance(self, seq_id: str, accepted: int, drafted: int) -> None:
         if self.force_k is not None:
-            return  # calibration prompts are synthetic: their acceptance says nothing about real requests
-        total_accepted, total_drafted = self.counts.get(seq_id, (0, 0))
-        self.counts[seq_id] = (total_accepted + accepted, total_drafted + drafted)
-        # Pooled over every request, so it can move slowly: a few drafted tokens shift it a little.
-        weight = drafted / (drafted + self.prior_weight)
-        self.global_acceptance += weight * (accepted / drafted - self.global_acceptance)
+            return  # warmup and calibration prompts are synthetic: their acceptance says nothing real
+        # Per-token acceptance is accepted / checked. Drafts after the first rejection were never checked:
+        # they aren't rejections. Dividing by all drafted tokens instead biases the rate down, more so for
+        # larger k (measured: 0.72 at k = 2, 0.59 at k = 4, 0.48 at k = 6 for the same models).
+        checked = accepted + (1 if accepted < drafted else 0)
+        total_accepted, total_checked = self.counts.get(seq_id, (0, 0))
+        self.counts[seq_id] = (total_accepted + accepted, total_checked + checked)
+        # Pooled over every request, so it can move slowly: a few checked tokens shift it a little.
+        weight = checked / (checked + self.prior_weight)
+        self.global_acceptance += weight * (accepted / checked - self.global_acceptance)
 
     def release(self, seq_id: str) -> None:
         self.counts.pop(seq_id, None)

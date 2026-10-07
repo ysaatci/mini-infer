@@ -59,3 +59,10 @@ def test_a_pessimistic_request_still_gets_rechecked():
     policy.counts["a"] = (0, 20)
     choices = [policy.choose(["a"]) for _ in range(10)]
     assert choices[:9] == [0] * 9 and choices[9] == 2
+
+
+def test_acceptance_counts_only_checked_drafts():
+    # 2 of 4 drafts accepted, then a rejection: 3 drafts were checked, the 4th never was.
+    policy = AdaptiveDraftPolicy(prior_weight=0)
+    policy.record_acceptance("a", accepted=2, drafted=4)
+    assert policy.request_acceptance("a") == pytest.approx(2 / 3)
