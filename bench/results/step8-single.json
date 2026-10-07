@@ -1,0 +1,86 @@
+{
+  "environment": {
+    "time": "2026-10-07T21:01:08+00:00",
+    "commit": "26bc906",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "engines": [
+      "mini-infer",
+      "mini-infer-int8"
+    ],
+    "prompt_lens": [
+      128,
+      512,
+      2048
+    ],
+    "output_len": 256,
+    "repeats": 3,
+    "out": "bench/results/step8-single.json"
+  },
+  "results": [
+    {
+      "engine": "mini-infer",
+      "workload": "in128-out256",
+      "ttft_ms": 39.99950700000454,
+      "decode_tok_s": 57.594256974978784,
+      "itl_p50_ms": 17.17352500000402,
+      "itl_p99_ms": 25.509932999995044,
+      "e2e_s": 4.473131728999988,
+      "peak_mem_gb": 4.535246336
+    },
+    {
+      "engine": "mini-infer",
+      "workload": "in512-out256",
+      "ttft_ms": 102.92740400001321,
+      "decode_tok_s": 59.65570172153085,
+      "itl_p50_ms": 16.85435900000698,
+      "itl_p99_ms": 18.812216000014814,
+      "e2e_s": 4.382864153999975,
+      "peak_mem_gb": 4.560422912
+    },
+    {
+      "engine": "mini-infer",
+      "workload": "in2048-out256",
+      "ttft_ms": 330.78076700002157,
+      "decode_tok_s": 60.4632008567,
+      "itl_p50_ms": 16.542818999994324,
+      "itl_p99_ms": 19.296722000007094,
+      "e2e_s": 4.53794997,
+      "peak_mem_gb": 4.660342784
+    },
+    {
+      "engine": "mini-infer-int8",
+      "workload": "in128-out256",
+      "ttft_ms": 80.42284499998686,
+      "decode_tok_s": 141.64993001918543,
+      "itl_p50_ms": 7.162272000016401,
+      "itl_p99_ms": 8.49928299999192,
+      "e2e_s": 1.8806355239999846,
+      "peak_mem_gb": 3.511136768
+    },
+    {
+      "engine": "mini-infer-int8",
+      "workload": "in512-out256",
+      "ttft_ms": 156.47231200000533,
+      "decode_tok_s": 122.56674489853431,
+      "itl_p50_ms": 8.252866999953312,
+      "itl_p99_ms": 9.076430999982676,
+      "e2e_s": 2.235185226999988,
+      "peak_mem_gb": 3.522550784
+    },
+    {
+      "engine": "mini-infer-int8",
+      "workload": "in2048-out256",
+      "ttft_ms": 379.616335000037,
+      "decode_tok_s": 119.93641530023432,
+      "itl_p50_ms": 8.385299999986273,
+      "itl_p99_ms": 9.819997999954921,
+      "e2e_s": 2.499262428999998,
+      "peak_mem_gb": 3.584459776
+    }
+  ],
+  "stats": {}
+}

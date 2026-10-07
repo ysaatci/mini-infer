@@ -1,0 +1,65 @@
+{
+  "environment": {
+    "time": "2026-10-07T21:07:59+00:00",
+    "commit": "26bc906",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "draft_model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "draft_tokens": [
+      0,
+      2
+    ],
+    "concurrency": [
+      1,
+      4
+    ],
+    "temperatures": [
+      0.0
+    ],
+    "kv_cache_gb": 1.41,
+    "int8": true,
+    "out": "bench/results/step8-int8-spec.json"
+  },
+  "results": [
+    {
+      "engine": "no-spec-int8",
+      "workload": "c1-t0",
+      "output_tok_s": 121.111995076512,
+      "decode_tok_s_p50": 125.51309798986429,
+      "ttft_p50_ms": 31.665186999930484,
+      "acceptance": 0.0,
+      "tokens_per_step": 1.0
+    },
+    {
+      "engine": "no-spec-int8",
+      "workload": "c4-t0",
+      "output_tok_s": 425.46157745306,
+      "decode_tok_s_p50": 117.47545577153062,
+      "ttft_p50_ms": 51.85318099995584,
+      "acceptance": 0.0,
+      "tokens_per_step": 1.0
+    },
+    {
+      "engine": "k=2-int8",
+      "workload": "c1-t0",
+      "output_tok_s": 119.6908940963137,
+      "decode_tok_s_p50": 120.73694009043479,
+      "ttft_p50_ms": 30.684129999940524,
+      "acceptance": 0.7142131979695432,
+      "tokens_per_step": 2.4284263959390864
+    },
+    {
+      "engine": "k=2-int8",
+      "workload": "c4-t0",
+      "output_tok_s": 414.2193038081208,
+      "decode_tok_s_p50": 113.42972515056698,
+      "ttft_p50_ms": 30.31693599996288,
+      "acceptance": 0.7114989733059548,
+      "tokens_per_step": 2.4229979466119094
+    }
+  ],
+  "stats": {}
+}
