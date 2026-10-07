@@ -2,7 +2,7 @@ import pytest
 import torch
 from transformers import AutoTokenizer
 
-from mini_infer.cache import StaticKVCache
+from mini_infer.cache import SlotKVPool
 from mini_infer.generate import generate
 from mini_infer.loader import load_model, resolve_model_dir
 
@@ -27,7 +27,8 @@ def input_ids():
 def test_chunked_forward_matches_full_forward(model, input_ids):
     # Covers all three attention paths: prefill, several tokens after a prefix, one token after a prefix.
     full = model(input_ids)
-    cache = StaticKVCache(model.config, 1, input_ids.shape[1], input_ids.device, torch.float32)
+    pool = SlotKVPool(model.config, 1, input_ids.shape[1], input_ids.device, torch.float32)
+    cache = pool.view([pool.allocate()])
     chunks = [input_ids[:, :8], input_ids[:, 8:12], input_ids[:, 12:13]]
     chunked = torch.cat([model(chunk, cache=cache) for chunk in chunks], dim=1)
     torch.testing.assert_close(chunked, full[:, :13], atol=1e-3, rtol=1e-3)

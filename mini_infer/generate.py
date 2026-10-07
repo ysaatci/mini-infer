@@ -3,7 +3,7 @@ from collections.abc import Iterator
 import torch
 from torch import Tensor
 
-from mini_infer.cache import StaticKVCache
+from mini_infer.cache import SlotKVPool
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.sampling import SamplingParams, sample
 
@@ -21,7 +21,10 @@ def stream(
     """prompt_ids [B, T] -> yields next token ids [B] one step at a time. Stops once every row hits eos_id."""
     B, T = prompt_ids.shape
     weight = model.lm_head.weight
-    cache = StaticKVCache(model.config, B, T + max_new_tokens, weight.device, weight.dtype) if use_cache else None
+    cache = None
+    if use_cache:
+        pool = SlotKVPool(model.config, B, T + max_new_tokens, weight.device, weight.dtype)
+        cache = pool.view([pool.allocate() for _ in range(B)])
 
     tokens = prompt_ids
     next_input = prompt_ids  # prefill: the whole prompt in one forward
