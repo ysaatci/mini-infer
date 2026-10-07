@@ -29,7 +29,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - KV cache here is still one big preallocated slot per request.
 - Why: a GPU decoding one request is mostly idle. Batching raises throughput, and continuous batching avoids the batch waiting on its slowest request.
 
-### 5. Paged KV cache
+### 5. Paged KV cache (done)
 - Split KV memory into 16-token blocks, give each request a block table, allocate blocks on demand and free them on finish. Preempt the newest request (free its blocks, re-prefill later) when memory runs out.
 - Triton decode kernel reads blocks in place through the table (no gather), splitting long sequences across programs when the batch is small. A plain PyTorch gather backend is the reference the kernel is tested against.
 - Benchmark at step 4's KV memory (1.41 GB) with the batch cap raised from 32 to 64.
