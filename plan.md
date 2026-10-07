@@ -7,11 +7,11 @@ Rules: one commit per step, benchmark after every optimization, tests only where
 
 ## Steps
 
-### 0. Setup
+### 0. Setup (done)
 - WSL2 + CUDA 12.8 PyTorch, `uv` env, download both models.
 - Why: everything after this depends on the GPU working. Fail early.
 
-### 1. Own forward pass
+### 1. Own forward pass (done)
 - Load safetensors weights into our own Qwen2 implementation: RMSNorm, RoPE, grouped-query attention, SwiGLU MLP.
 - Test (the only essential one): logits match Hugging Face within tolerance.
 - Why: if we don't own the forward pass we can't change how attention reads the KV cache. Matching HF proves it's correct before we build on it.
