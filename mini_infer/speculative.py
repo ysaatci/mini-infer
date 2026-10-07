@@ -91,6 +91,7 @@ class SpeculativeDecoder:
         if not self._catch_up_draft(requests):
             return None
         params = [r.params for r in requests]
+        all_greedy = all(p.temperature == 0 for p in params)
         context = [self.target_pool.lengths[s] for s in seq_ids]  # both caches hold all but the last token
 
         # Draft k tokens, one forward each, plus one more forward that only stores the k-th token's k/v.
@@ -101,7 +102,8 @@ class SpeculativeDecoder:
             if i == self.k:
                 break
             q = probabilities(logits, params)
-            current = torch.multinomial(q, 1)  # one-hot rows (greedy) always give their top token
+            # One-hot rows (greedy) always give their top token; argmax gets it without sampling 152k entries.
+            current = q.argmax(-1, keepdim=True) if all_greedy else torch.multinomial(q, 1)
             draft_tokens.append(current)
             draft_probs.append(q)
         draft_tokens = torch.cat(draft_tokens, dim=1)  # [B, k]
