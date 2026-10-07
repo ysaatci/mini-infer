@@ -40,7 +40,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Prerequisites: the caller advances the cache (no Python bookkeeping inside the forward), the kernel's split count depends only on batch size, `PagedBatch` can wrap existing buffers.
 - Why: after step 5 a decode step cost ~30 ms whether the batch was 1 or 20, so the floor was CPU launch overhead, not GPU work.
 
-### 6. OpenAI-compatible server
+### 6. OpenAI-compatible server (done)
 - FastAPI `/v1/chat/completions`, `/v1/completions` (streaming and not) and `/v1/models`.
 - The engine loop runs on a background thread; the event loop sends it add/abort commands through a thread-safe inbox and gets tokens back through per-request asyncio queues. A client disconnect aborts its request and frees its blocks.
 - Incremental detokenizer so streamed text never splits a multi-byte character.
@@ -78,6 +78,7 @@ Ideas noted while building. Each needs a benchmark before/after to earn its plac
 
 - **Done: CUDA graphs for decode (step 5b).** After step 5 a decode step cost ~30 ms whether the batch was 1 or 20: CPU launch overhead, not GPU work. Single request: 36 → 64 tok/s (HF: 33–39). Offline batching: 874 → 985 tok/s (vLLM 1238). At 1–2 req/s, inter-token latency now matches vLLM (13–16 ms).
 - **Chunked prefill.** The remaining gap to vLLM is under heavy load: at 3 req/s our worst-case token latency is 318 ms vs vLLM's 172, because a long prompt's prefill pauses every running request. vLLM splits prompts into chunks and mixes them into decode steps.
+- **Serving overhead (step 6).** Over HTTP, inter-token latency is 3–7 ms higher than calling the engine directly (rate 1: 13.2 → 16.2 ms, rate 2: 15.8 → 22.9 ms) and offline throughput drops 8% (985 → 903 tok/s). The per-token Python work (detokenizing, JSON, SSE, one cross-thread handoff per token) runs on the event loop, and both threads share the GIL, so it slows the engine thread too. Cheaper: hand off one batch of tokens per step instead of one call per token. Fuller fix: run the engine in its own process, which is why vLLM moved to that design.
 - **Batch-1 kernel splitting.** A single request is split 20 ways; the merge seems to cost more than it saves (batch 1 step 17.3 ms vs batch 4 at 14.1 ms). Capping splits by sequence length should fix it.
 - **Done: paged attention kernel instead of gathering.** Once requests finish at different times their memory is scattered, and reading it as one batch copied every row's cache each layer: 30 ms of a 60 ms decode step at batch 20. The Triton kernel reads blocks in place. Decode step at batch 64: 123 → 56 ms; at batch 20: 44 → 31 ms.
 - **Done: split sequences across programs for small batches.** One program per (sequence, k/v head) put a single request on 2 of the GPU's 20 cores. Small batches now split each sequence into chunks and merge the partial softmaxes in a second Triton kernel. Merging with ~9 PyTorch ops per layer cost more than it saved; one merge kernel fixed that.
