@@ -1,0 +1,35 @@
+{
+  "environment": {
+    "time": "2026-10-07T18:58:01+00:00",
+    "commit": "e20be0a",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.13.0+cu130"
+  },
+  "settings": {
+    "engine": "vllm",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "num_requests": 100,
+    "rate": 2.0,
+    "max_batch_size": 64,
+    "kv_cache_gb": 1.41,
+    "max_len": 1536,
+    "seed": 0,
+    "out": "bench/results/step5-vllm-rate2.json"
+  },
+  "results": [
+    {
+      "engine": "vllm",
+      "workload": "rate2-n100",
+      "output_tok_s": 528.3464200456494,
+      "requests_s": 1.9364697993169968,
+      "ttft_p50_ms": 142.17113048617236,
+      "ttft_p99_ms": 362.23325342682955,
+      "itl_p50_ms": 15.593910000006872,
+      "itl_p99_ms": 130.91295499998523,
+      "e2e_p50_s": 5.502308301832095,
+      "e2e_p99_s": 10.226935610739025,
+      "peak_mem_gb": 4.838553088
+    }
+  ],
+  "stats": {}
+}
