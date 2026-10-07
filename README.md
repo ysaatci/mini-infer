@@ -14,8 +14,9 @@ Built to understand what inference servers like vLLM do, not to replace them.
 | Triton paged-attention kernel | Reading scattered cache blocks by copying them cost half of each step |
 | CUDA graphs | Launching hundreds of small kernels from Python dominated each step |
 | OpenAI-compatible server | Works with existing clients, streams tokens, frees memory on disconnect |
+| Speculative decoding | Every token costs a full read of the weights; a small model drafts and the big one checks several per read |
 
-Planned: speculative decoding, int8 weights.
+Planned: int8 weights.
 
 ## Results
 
@@ -29,6 +30,7 @@ Linux or WSL2 with an NVIDIA GPU and CUDA 12.8+.
 bash scripts/setup_wsl.sh          # venv + GPU check
 python scripts/download_models.py  # Qwen2.5 0.5B and 1.5B
 python -m mini_infer.server        # OpenAI-compatible API on localhost:8000
+                                   # --draft-model Qwen/Qwen2.5-0.5B-Instruct for speculative decoding
 pytest
 ```
 
