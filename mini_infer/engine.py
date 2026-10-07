@@ -43,6 +43,8 @@ class LLMEngine:
         self.pool = PagedKVPool(model.config, num_blocks, block_size, weight.device, weight.dtype)
         # Decode steps replay recorded graphs. Prefill stays eager: prompt lengths vary too much to record.
         self.graphs = DecodeGraphRunner(model, self.pool, max_batch_size) if use_cuda_graphs else None
+        # Longest prompt + output one request can have: every block left after the graph's scratch block.
+        self.max_request_tokens = self.pool.num_free_blocks * block_size
         self.scheduler = Scheduler(self.pool, max_batch_size)
         self._ids = itertools.count()
 
@@ -54,10 +56,9 @@ class LLMEngine:
         stop_ids: frozenset[int] = frozenset(),
         request_id: str | None = None,
     ) -> str:
-        capacity = self.pool.num_blocks * self.pool.block_size
-        if len(prompt_ids) + max_new_tokens > capacity:
+        if len(prompt_ids) + max_new_tokens > self.max_request_tokens:
             # Could never run, even alone with the whole cache.
-            raise ValueError(f"prompt + max_new_tokens exceeds KV cache capacity of {capacity} tokens")
+            raise ValueError(f"prompt + max_new_tokens exceeds KV cache capacity of {self.max_request_tokens} tokens")
         request_id = request_id or str(next(self._ids))
         self.scheduler.add(Request(request_id, list(prompt_ids), max_new_tokens, params, frozenset(stop_ids)))
         return request_id
