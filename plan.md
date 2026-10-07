@@ -80,14 +80,14 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ```
 mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py  quant.py
               paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
-              async_engine.py  detokenizer.py  protocol.py  server.py  speculative.py
+              async_engine.py  detokenizer.py  protocol.py  server.py  speculative.py  draft_policy.py
 bench/        single request: workload.py  engines.py  run.py
               batching: batch_workload.py  batch_engines.py  batch_run.py  http_run.py
-              speculative: chat_prompts.json  spec_run.py
-              quality: quality.py
+              speculative: chat_prompts.json  spec_run.py  adaptive_trace.py
+              quality: quality.py      charts: charts.py
               shared: metrics.py  report.py  results/*.json
 tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py  test_detokenizer.py  test_server.py
-              test_speculative_sampling.py  test_quant.py
+              test_speculative_sampling.py  test_quant.py  test_draft_policy.py
 ```
 
 ## Improvements found along the way
