@@ -1,0 +1,32 @@
+{
+  "environment": {
+    "time": "2026-10-07T19:46:03+00:00",
+    "commit": "49c43b6",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "url": "http://127.0.0.1:8000",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "num_requests": 100,
+    "rate": 3.0,
+    "seed": 0,
+    "out": "bench/results/step6-http-rate3.json"
+  },
+  "results": [
+    {
+      "engine": "mini-infer-http",
+      "workload": "rate3-n100",
+      "output_tok_s": 686.236678082797,
+      "requests_s": 2.5151615528617395,
+      "ttft_p50_ms": 165.93156494900185,
+      "ttft_p99_ms": 662.7574529419338,
+      "itl_p50_ms": 29.108479000001353,
+      "itl_p99_ms": 362.04275400001507,
+      "e2e_p50_s": 10.965879720024073,
+      "e2e_p99_s": 22.865858754826075,
+      "peak_mem_gb": 0.0
+    }
+  ],
+  "stats": {}
+}
