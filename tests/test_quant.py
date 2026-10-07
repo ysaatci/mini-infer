@@ -16,7 +16,7 @@ def test_round_trip_error_is_at_most_half_a_step():
 
 
 # Qwen2.5-1.5B shapes: attention q/o (1536 x 1536), MLP up (8960 x 1536) and down (1536 x 8960).
-@pytest.mark.parametrize("rows", [1, 5, 64])
+@pytest.mark.parametrize("rows", [1, 5, 64, 300])  # 300: prefill tiles
 @pytest.mark.parametrize("n, k", [(1536, 1536), (8960, 1536), (1536, 8960)])
 @pytest.mark.parametrize("dtype, tol", [(torch.float32, 1e-4), (torch.bfloat16, 3e-2)])
 @pytest.mark.parametrize("with_bias", [False, True])
@@ -30,8 +30,8 @@ def test_int8_matmul_matches_dequantized_reference(rows, n, k, dtype, tol, with_
     torch.testing.assert_close(actual.float(), expected, atol=tol * k**0.5, rtol=tol)
 
 
-def test_int8_linear_prefill_path_matches_reference():
-    # More rows than the kernel handles: dequantizes the layer and uses cuBLAS instead.
+def test_int8_linear_on_a_batch_of_prompts_matches_reference():
+    # [batch, tokens, features] input, enough rows for the prefill tiles.
     torch.manual_seed(0)
     linear = nn.Linear(1536, 1536, bias=True, device="cuda")
     layer = Int8Linear(linear)
