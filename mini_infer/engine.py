@@ -1,10 +1,12 @@
 import itertools
+import time
 from dataclasses import dataclass
 
 import torch
 from torch import Tensor
 
-from mini_infer.cuda_graphs import DecodeGraphRunner
+from mini_infer.cuda_graphs import BATCH_BUCKETS, DecodeGraphRunner
+from mini_infer.draft_policy import AdaptiveDraftPolicy
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.request import Request
@@ -51,18 +53,18 @@ class LLMEngine:
         self.scheduler = Scheduler(
             self.pool,
             max_batch_size,
-            decode_lookahead=self._decode_lookahead(speculative),
+            decode_lookahead=self._decode_lookahead,
             on_release=self.speculative.release if self.speculative else lambda request_id: None,
         )
         self._ids = itertools.count()
 
-    @staticmethod
-    def _decode_lookahead(speculative: SpeculativeConfig | None):
-        """Cache slots a decode step needs per request: k + 1 when the batch is small enough to speculate."""
-        if speculative is None:
-            return lambda batch_size: 1
-        k, limit = speculative.num_draft_tokens, speculative.max_batch_size
-        return lambda batch_size: k + 1 if batch_size <= limit else 1
+    def _decode_lookahead(self, requests: list[Request]) -> int:
+        """Cache slots the next decode step needs per request: k + 1, where the draft policy picks k
+        (0 = plain decode). Batches above the speculation limit always decode plainly."""
+        spec = self.speculative
+        if spec is None or len(requests) > spec.max_batch_size:
+            return 1
+        return min(spec.policy.choose([r.id for r in requests]), spec.max_draft_tokens) + 1
 
     def add_request(
         self,
@@ -89,6 +91,24 @@ class LLMEngine:
                 self.add_request([0] * length, 4, params, request_id="warmup")
                 while self.has_unfinished():
                     self.step()
+        if self.speculative is not None and isinstance(self.speculative.policy, AdaptiveDraftPolicy):
+            self._calibrate_draft_policy(self.speculative.policy)
+
+    def _calibrate_draft_policy(self, policy: AdaptiveDraftPolicy, steps: int = 6) -> None:
+        """Time a few decode steps for every k at every batch bucket, so the policy starts with real costs
+        instead of guesses. The engine keeps refining these while it serves."""
+        buckets = [b for b in BATCH_BUCKETS if b <= self.speculative.max_batch_size]
+        for batch_size in buckets:
+            for k in range(self.speculative.max_draft_tokens + 1):
+                ids = [f"calibrate-{i}" for i in range(batch_size)]
+                if (64 + steps * (k + 1)) * batch_size > self.max_request_tokens:
+                    continue  # too little cache memory to calibrate this size (tiny test engines)
+                policy.force_k = k
+                for request_id in ids:
+                    self.add_request(list(range(1, 65)), steps * (k + 1), request_id=request_id)
+                while self.has_unfinished():
+                    self.step()
+        policy.force_k = None
 
     def has_unfinished(self) -> bool:
         return self.scheduler.has_unfinished()
@@ -105,10 +125,14 @@ class LLMEngine:
             return []
         new_tokens = None
         if batch.decode and batch.lookahead > 1:
-            new_tokens = self.speculative.step(requests)  # None if the draft cache had no room
+            new_tokens = self.speculative.step(requests, batch.lookahead - 1)  # None if the draft cache had no room
         if new_tokens is None:
+            start = time.perf_counter()
             logits = torch.cat([self._prefill(r) for r in requests]) if batch.prefill else self._decode(requests)
             new_tokens = [[t] for t in sample_batch(logits, [r.params for r in requests]).tolist()]  # one GPU sync
+            if batch.decode and self.speculative is not None:
+                # The k = 0 baseline the draft policy weighs speculative steps against.
+                self.speculative.policy.record_step(0, len(requests), time.perf_counter() - start)
 
         outputs = []
         for request, tokens in zip(requests, new_tokens):
