@@ -1,5 +1,6 @@
 """How many tokens the draft model proposes each step (k; 0 means plain decode)."""
 
+import time
 from collections import deque
 from typing import Protocol
 
@@ -81,7 +82,7 @@ class AdaptiveDraftPolicy:
         self.acceptance: dict[str, float] = {}
         self.step_seconds: dict[tuple[int, int], float] = {}  # (k, batch bucket) -> moving average
         self.force_k: int | None = None  # calibration pins k to measure each one
-        self.decisions: deque[tuple[int, int]] = deque(maxlen=100_000)  # (batch size, k), for plots
+        self.decisions: deque[tuple[float, int, int]] = deque(maxlen=100_000)  # (time, batch size, k), for plots
 
     def choose(self, seq_ids: list[str]) -> int:
         if self.force_k is not None:
@@ -99,7 +100,7 @@ class AdaptiveDraftPolicy:
         self._decisions_made += 1
         if self._decisions_made % self.explore_every == 0:
             best_k = self._neighbor(best_k)
-        self.decisions.append((len(seq_ids), best_k))
+        self.decisions.append((time.perf_counter(), len(seq_ids), best_k))
         return best_k
 
     def _neighbor(self, k: int) -> int:
