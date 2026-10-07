@@ -16,7 +16,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Test (the only essential one): logits match Hugging Face within tolerance.
 - Why: if we don't own the forward pass we can't change how attention reads the KV cache. Matching HF proves it's correct before we build on it.
 
-### 2. Generation loop, no cache, then KV cache
+### 2. Generation loop, no cache, then KV cache (done)
 - First version recomputes the whole sequence every token. Then add a contiguous KV cache so each step processes one token.
 - Why: the no-cache version is the baseline that shows the cost (quadratic work). The cache is the first real optimization and the base for everything else.
 
