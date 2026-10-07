@@ -64,11 +64,19 @@ class AdaptiveDraftPolicy:
     Acceptance is tracked per request (code is more predictable than stories), starting from the global
     average. Step times are moving averages per (k, batch bucket), seeded by a calibration run and kept
     up to date as the engine runs, so the policy fits whatever GPU and models it runs on.
+
+    Every explore_every-th decision tries a neighboring k instead of the best one. Acceptance is only
+    observed while speculating, so without this a policy that settles on k = 0 would never notice that
+    the requests had become predictable enough to speculate on.
     """
 
-    def __init__(self, max_draft_tokens: int = 4, prior_acceptance: float = 0.6, smoothing: float = 0.2):
+    def __init__(
+        self, max_draft_tokens: int = 4, prior_acceptance: float = 0.6, smoothing: float = 0.2, explore_every: int = 10
+    ):
         self.max_draft_tokens = max_draft_tokens
         self.smoothing = smoothing  # weight of the newest observation in each moving average
+        self.explore_every = explore_every
+        self._decisions_made = 0
         self.global_acceptance = prior_acceptance
         self.acceptance: dict[str, float] = {}
         self.step_seconds: dict[tuple[int, int], float] = {}  # (k, batch bucket) -> moving average
@@ -88,8 +96,18 @@ class AdaptiveDraftPolicy:
             throughput = sum(expected_tokens(k, a) for a in rates) / seconds
             if throughput > best_throughput:
                 best_k, best_throughput = k, throughput
+        self._decisions_made += 1
+        if self._decisions_made % self.explore_every == 0:
+            best_k = self._neighbor(best_k)
         self.decisions.append((len(seq_ids), best_k))
         return best_k
+
+    def _neighbor(self, k: int) -> int:
+        """Alternately one above and one below k, kept within 0 .. max_draft_tokens."""
+        go_up = (self._decisions_made // self.explore_every) % 2 == 1
+        if k == 0 or (go_up and k < self.max_draft_tokens):
+            return k + 1
+        return k - 1
 
     def record_step(self, k: int, batch_size: int, seconds: float) -> None:
         key = (k, batch_bucket(batch_size))
