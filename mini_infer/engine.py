@@ -10,6 +10,7 @@ from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.request import Request
 from mini_infer.sampling import SamplingParams, sample_batch
 from mini_infer.scheduler import Scheduler
+from mini_infer.speculative import SpeculativeConfig, SpeculativeDecoder
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,8 @@ class LLMEngine:
     """Continuous batching: requests join and leave the running batch between steps.
 
     Drive it with add_request() and step(). Each step either prefills newly admitted requests or
-    runs one decode step for every running request.
+    runs one decode step for every running request. With speculative decoding configured, small
+    batches decode speculatively instead and each request can gain up to k + 1 tokens per step.
     """
 
     def __init__(
@@ -37,16 +39,31 @@ class LLMEngine:
         max_batch_size: int = 64,
         block_size: int = DEFAULT_BLOCK_SIZE,
         use_cuda_graphs: bool = True,
+        speculative: SpeculativeConfig | None = None,
     ):
         weight = model.lm_head.weight
         self.model = model
         self.pool = PagedKVPool(model.config, num_blocks, block_size, weight.device, weight.dtype)
         # Decode steps replay recorded graphs. Prefill stays eager: prompt lengths vary too much to record.
         self.graphs = DecodeGraphRunner(model, self.pool, max_batch_size) if use_cuda_graphs else None
-        # Longest prompt + output one request can have: every block left after the graph's scratch block.
+        self.speculative = SpeculativeDecoder(model, self.pool, speculative, use_cuda_graphs) if speculative else None
+        # Longest prompt + output one request can have: every block left after the graphs' scratch blocks.
         self.max_request_tokens = self.pool.num_free_blocks * block_size
-        self.scheduler = Scheduler(self.pool, max_batch_size)
+        self.scheduler = Scheduler(
+            self.pool,
+            max_batch_size,
+            decode_lookahead=self._decode_lookahead(speculative),
+            on_release=self.speculative.release if self.speculative else lambda request_id: None,
+        )
         self._ids = itertools.count()
+
+    @staticmethod
+    def _decode_lookahead(speculative: SpeculativeConfig | None):
+        """Cache slots a decode step needs per request: k + 1 when the batch is small enough to speculate."""
+        if speculative is None:
+            return lambda batch_size: 1
+        k, limit = speculative.num_draft_tokens, speculative.max_batch_size
+        return lambda batch_size: k + 1 if batch_size <= limit else 1
 
     def add_request(
         self,
@@ -81,16 +98,23 @@ class LLMEngine:
     @torch.inference_mode()
     def step(self) -> list[TokenOutput]:
         batch = self.scheduler.schedule()
-        if batch.prefill:
-            requests = batch.prefill
-            logits = torch.cat([self._prefill(r) for r in requests])
-        elif batch.decode:
-            requests = batch.decode
-            logits = self._decode(requests)
-        else:
+        requests = batch.prefill or batch.decode
+        if not requests:
             return []
-        tokens = sample_batch(logits, [r.params for r in requests]).tolist()  # one GPU sync per step
-        return [self._append(r, t) for r, t in zip(requests, tokens)]
+        new_tokens = None
+        if batch.decode and batch.lookahead > 1:
+            new_tokens = self.speculative.step(requests)  # None if the draft cache had no room
+        if new_tokens is None:
+            logits = torch.cat([self._prefill(r) for r in requests]) if batch.prefill else self._decode(requests)
+            new_tokens = [[t] for t in sample_batch(logits, [r.params for r in requests]).tolist()]  # one GPU sync
+
+        outputs = []
+        for request, tokens in zip(requests, new_tokens):
+            for token in tokens:
+                outputs.append(self._append(request, token))
+                if outputs[-1].finished:
+                    break  # a stop token or max_new_tokens can land mid-way through accepted drafts
+        return outputs
 
     def _prefill(self, request: Request) -> Tensor:
         # One request per forward: prompts differ in length, and padding them together wastes compute.
