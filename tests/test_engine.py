@@ -73,6 +73,8 @@ def noisy_draft():
     return draft
 
 
+# 7 blocks, two of which hold graph padding (decode and verify): 80 tokens. The longest request needs 60
+# with its 5-token lookahead, so it fits alone, but three requests growing together get preempted.
 @pytest.mark.parametrize(
     "num_blocks, cuda_graphs, expect_preemption",
     [(64, False, False), (64, True, False), (7, True, True)],
