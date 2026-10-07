@@ -24,7 +24,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Fixed prompt set, fixed output length. Report tokens/s, time to first token, p50/p99 latency, peak GPU memory. Run against HF `generate` too.
 - Why: built now so every later step has a before/after. Without it, claims in the README are guesses.
 
-### 4. Continuous batching
+### 4. Continuous batching (done)
 - Scheduler with a waiting queue and a running batch. Finished requests leave and new ones join between decode steps, instead of waiting for the whole batch to finish.
 - KV cache here is still one big preallocated slot per request.
 - Why: a GPU decoding one request is mostly idle. Batching raises throughput, and continuous batching avoids the batch waiting on its slowest request.
