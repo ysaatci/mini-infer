@@ -85,14 +85,18 @@ class LLMEngine:
         """Run a few requests before serving. CUDA loads kernels lazily (~0.6 s measured for the first
         sampled request), and int8 matmuls tune their tiles per prompt-size class on first use; without
         this, real requests would pay for both."""
+        policy = self.speculative.policy if self.speculative is not None else None
+        adaptive = policy if isinstance(policy, AdaptiveDraftPolicy) else None
+        if adaptive:
+            adaptive.calibrate(0)  # warmup prompts are synthetic: keep them from shaping acceptance estimates
         prompt_lengths = [n for n in (8, 200, 600, 1500) if n + 4 <= self.max_request_tokens]
         for length in prompt_lengths:
             for params in (SamplingParams(), SamplingParams(temperature=1.0, top_p=0.9)):
                 self.add_request([0] * length, 4, params, request_id="warmup")
                 while self.has_unfinished():
                     self.step()
-        if self.speculative is not None and isinstance(self.speculative.policy, AdaptiveDraftPolicy):
-            self._calibrate_draft_policy(self.speculative.policy)
+        if adaptive:
+            self._calibrate_draft_policy(adaptive)
 
     def _calibrate_draft_policy(self, policy: AdaptiveDraftPolicy, steps: int = 10) -> None:
         """Time a few decode steps for every k at every batch bucket, so the policy starts with real costs
