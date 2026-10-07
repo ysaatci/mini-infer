@@ -65,6 +65,10 @@ class LLMEngine:
     def has_unfinished(self) -> bool:
         return self.scheduler.has_unfinished()
 
+    def abort(self, request_id: str) -> None:
+        """Stop a request and free its KV blocks. No further outputs are produced for it."""
+        self.scheduler.abort(request_id)
+
     @torch.inference_mode()
     def step(self) -> list[TokenOutput]:
         batch = self.scheduler.schedule()

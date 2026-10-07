@@ -46,6 +46,19 @@ class Scheduler:
         self.running.remove(request)
         request.status = RequestStatus.FINISHED
 
+    def abort(self, request_id: str) -> None:
+        """Drop a request wherever it is (e.g. its client disconnected). Unknown or finished ids are ignored."""
+        for request in self.running:
+            if request.id == request_id:
+                self.finish(request)
+                return
+        for request in self.waiting:
+            if request.id == request_id:
+                self.waiting.remove(request)
+                self.pool.free(request.id)  # a preempted request may still hold an empty table entry
+                request.status = RequestStatus.FINISHED
+                return
+
     def _admit(self) -> list[Request]:
         admitted = []
         while self.waiting and len(self.running) < self.max_batch_size:
