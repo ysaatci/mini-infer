@@ -23,17 +23,25 @@ def sample(logits: Tensor, params: SamplingParams, generator: torch.Generator | 
 
 def sample_batch(logits: Tensor, params: list[SamplingParams], generator: torch.Generator | None = None) -> Tensor:
     """logits [B, vocab] -> next token ids [B], each row with its own params (requests in a batch differ)."""
-    greedy_ids = logits.argmax(-1)
     if all(p.temperature == 0 for p in params):
-        return greedy_ids
+        return logits.argmax(-1)  # skip building distributions over the whole vocabulary
+    return torch.multinomial(probabilities(logits, params), 1, generator=generator).squeeze(-1)
 
+
+def probabilities(logits: Tensor, params: list[SamplingParams]) -> Tensor:
+    """logits [B, vocab] -> the distribution each row samples from [B, vocab], float32.
+
+    Temperature and top-p applied. Greedy rows are one-hot on their top token, so greedy is just a
+    special case of sampling, which speculative decoding's acceptance rule relies on.
+    """
     temperature = logits.new_tensor([p.temperature for p in params], dtype=torch.float32)
     top_p = logits.new_tensor([p.top_p for p in params], dtype=torch.float32)
-    # Greedy rows get temperature 1 here only to avoid dividing by zero; their result is replaced below.
-    probs = torch.softmax(logits.float() / temperature.masked_fill(temperature == 0, 1)[:, None], dim=-1)
+    greedy = temperature == 0
+    # Greedy rows get temperature 1 here only to avoid dividing by zero; they're replaced below.
+    probs = torch.softmax(logits.float() / temperature.masked_fill(greedy, 1)[:, None], dim=-1)
     probs = _top_p_filter(probs, top_p)
-    sampled = torch.multinomial(probs, 1, generator=generator).squeeze(-1)
-    return torch.where(temperature == 0, greedy_ids, sampled)
+    one_hot = torch.zeros_like(probs).scatter_(-1, logits.argmax(-1, keepdim=True), 1.0)
+    return torch.where(greedy[:, None], one_hot, probs)
 
 
 def _top_p_filter(probs: Tensor, top_p: Tensor) -> Tensor:
