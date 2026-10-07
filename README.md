@@ -20,10 +20,9 @@ To be filled in as each step lands (RTX 5050 8 GB, Qwen2.5-1.5B, bf16).
 
 ## Run
 
-```bash
-uv sync
-python -m mini_infer.server --model Qwen/Qwen2.5-1.5B-Instruct
-python bench/run.py
-```
+Linux or WSL2 with an NVIDIA GPU and CUDA 12.8+.
 
-Runs on Linux or WSL2 with CUDA 12.8+.
+```bash
+bash scripts/setup_wsl.sh          # venv + GPU check
+python scripts/download_models.py  # Qwen2.5 0.5B and 1.5B
+```

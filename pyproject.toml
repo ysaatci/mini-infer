@@ -1,0 +1,20 @@
+[project]
+name = "mini-infer"
+version = "0.1.0"
+description = "Small LLM inference engine from scratch in PyTorch"
+requires-python = ">=3.12"
+dependencies = [
+    "torch",
+    "safetensors",
+    "transformers>=5",
+    "fastapi",
+    "uvicorn",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
