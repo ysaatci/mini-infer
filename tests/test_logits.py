@@ -24,7 +24,8 @@ def test_logits_match_huggingface(name: str) -> None:
     input_ids = AutoTokenizer.from_pretrained(model_dir)(PROMPT, return_tensors="pt").input_ids.cuda()
 
     # One model on the GPU at a time: two fp32 copies of the 1.5B model don't fit in 8 GB.
-    reference = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.float32).cuda()
+    # Straight onto the GPU: an fp32 copy in system RAM (6 GB for 1.5B) can exhaust WSL's memory mid-suite.
+    reference = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.float32, device_map="cuda")
     expected = reference(input_ids).logits
     del reference
     free_gpu()

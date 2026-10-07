@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "openai", "pyarrow", "matplotlib"]
+dev = ["pytest", "openai", "pyarrow", "matplotlib", "accelerate"]
 
 [build-system]
 requires = ["hatchling"]
