@@ -8,7 +8,7 @@ from torch import Tensor
 
 @triton.jit
 def _paged_decode_kernel(
-    Q, K, V, Out, Maxes, Sums, BlockTables, SeqLens, scale, blocks_per_split,
+    Q, K, V, Out, Maxes, Sums, BlockTables, SeqLens, scale, num_splits,
     stride_qb, stride_qh,
     stride_kb, stride_kh, stride_kt,
     stride_tb,
@@ -42,8 +42,12 @@ def _paged_decode_kernel(
     s_sum = tl.zeros([GROUP_PAD], tl.float32)
     acc = tl.zeros([GROUP_PAD, HEAD_DIM], tl.float32)
 
+    # Each sequence is divided by its own length, so a short sequence next to a long one isn't left
+    # with empty splits while the long one's splits do all the work.
+    num_blocks = tl.cdiv(seq_len, BLOCK_SIZE)
+    blocks_per_split = tl.cdiv(num_blocks, num_splits)
     start = split * blocks_per_split
-    end = tl.minimum(start + blocks_per_split, tl.cdiv(seq_len, BLOCK_SIZE))
+    end = tl.minimum(start + blocks_per_split, num_blocks)
     for j in range(start, end):
         block = tl.load(BlockTables + b * stride_tb + j).to(tl.int64)
         offsets = block * stride_kb + kv_head * stride_kh + t[:, None] * stride_kt + d[None, :]
@@ -87,10 +91,8 @@ def paged_decode_attention(q: Tensor, k_cache: Tensor, v_cache: Tensor, block_ta
 
     # Split sequences until there are ~2 programs per GPU core, so small batches don't leave it idle.
     # Larger batches already have enough programs and skip the split (and its merge) entirely.
-    max_blocks = block_tables.shape[1]
-    splits = min(max_blocks, triton.cdiv(2 * _num_sms(q.device), B * H_kv))
-    blocks_per_split = triton.cdiv(max_blocks, splits)
-    splits = triton.cdiv(max_blocks, blocks_per_split)
+    # Depends only on the batch size, not on lengths, so a CUDA graph captured for a batch size stays valid.
+    splits = triton.cdiv(2 * _num_sms(q.device), B * H_kv)
 
     if splits == 1:
         out = torch.empty_like(q)
@@ -105,7 +107,7 @@ def paged_decode_attention(q: Tensor, k_cache: Tensor, v_cache: Tensor, block_ta
         stat_strides = (maxes.stride(0), maxes.stride(1))
 
     _paged_decode_kernel[(B, H_kv, splits)](
-        q, k_cache, v_cache, out, maxes, sums, block_tables, seq_lens, D**-0.5, blocks_per_split,
+        q, k_cache, v_cache, out, maxes, sums, block_tables, seq_lens, D**-0.5, splits,
         q.stride(0), q.stride(1),
         k_cache.stride(0), k_cache.stride(1), k_cache.stride(2),
         block_tables.stride(0),
