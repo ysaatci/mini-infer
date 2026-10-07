@@ -54,9 +54,10 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ## Layout
 
 ```
-mini_infer/   model.py  cache.py  scheduler.py  sampling.py  speculative.py  server.py
-bench/        run.py  prompts.json
-tests/        test_logits.py
+mini_infer/   config.py  layers.py  attention.py  model.py  loader.py  cache.py  sampling.py  generate.py
+              later: scheduler.py  speculative.py  server.py
+bench/        workload.py  engines.py  metrics.py  report.py  run.py  results/*.json
+tests/        test_logits.py  test_cache.py
 ```
 
 ## Improvements found along the way
