@@ -18,9 +18,13 @@ class DecodeGraphRunner:
     dummy rows, replays, and reads logits from the graph's own output buffer.
 
     query_len is the number of new tokens per sequence: 1 for decode, k + 1 for speculative verification.
+    memory_pool lets several runners share one pool of graph memory. Safe because only one graph runs
+    at a time, and each graph's output buffer stays allocated, so it is never reused by another graph.
     """
 
-    def __init__(self, model: Qwen2ForCausalLM, pool: PagedKVPool, max_batch_size: int, query_len: int = 1):
+    def __init__(
+        self, model: Qwen2ForCausalLM, pool: PagedKVPool, max_batch_size: int, query_len: int = 1, memory_pool=None
+    ):
         self.model = model
         self.pool = pool
         self.query_len = query_len
@@ -42,7 +46,7 @@ class DecodeGraphRunner:
 
         self.graphs: dict[int, torch.cuda.CUDAGraph] = {}
         self.logits: dict[int, Tensor] = {}
-        self._capture()
+        self._capture(memory_pool or torch.cuda.graph_pool_handle())
 
     def run(self, token_ids: list[list[int]] | Tensor, seq_ids: list[str]) -> Tensor:
         """query_len new tokens per sequence -> logits [B, query_len, vocab]. Valid until the next call.
@@ -68,8 +72,7 @@ class DecodeGraphRunner:
         return self.logits[bucket][:B]
 
     @torch.inference_mode()
-    def _capture(self) -> None:
-        memory_pool = torch.cuda.graph_pool_handle()
+    def _capture(self, memory_pool) -> None:
         for bucket in reversed(self.buckets):  # largest first, so smaller graphs reuse its memory
 
             def step(b: int = bucket) -> Tensor:
