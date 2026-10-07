@@ -58,3 +58,13 @@ mini_infer/   model.py  cache.py  scheduler.py  sampling.py  speculative.py  ser
 bench/        run.py  prompts.json
 tests/        test_logits.py
 ```
+
+## Improvements found along the way
+
+Ideas noted while building. Each needs a benchmark before/after to earn its place.
+
+- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that.
+- **Logits for the last token only during prefill.** Prefill computes logits for every prompt token (151k vocab each) but generation only uses the last one. Wasted compute and memory that grows with prompt length.
+- **Fused RoPE / RMSNorm kernels (Triton).** Each is several small elementwise ops today. Fusing them cuts memory reads and launches.
+- **Chunked prefill.** A long prompt blocks every other request while it runs. Splitting it into chunks lets decode steps of other requests interleave (fits after step 4).
+- **Prefix caching.** Requests sharing a system prompt could reuse its KV blocks instead of recomputing them (fits after step 5).
