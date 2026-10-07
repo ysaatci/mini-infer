@@ -22,6 +22,7 @@ from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.protocol import ChatCompletionRequest, CompletionRequest
 from mini_infer.sampling import SamplingParams
+from mini_infer.speculative import SpeculativeConfig
 
 Tokens = AsyncIterator[TokenOutput]
 
@@ -122,7 +123,14 @@ def _sse(chunks: AsyncIterator[dict]) -> StreamingResponse:
     return StreamingResponse(lines(), media_type="text/event-stream")
 
 
-def build_app(model_name: str, kv_cache_gb: float, max_batch_size: int, cuda_graphs: bool = True) -> FastAPI:
+def build_app(
+    model_name: str,
+    kv_cache_gb: float,
+    max_batch_size: int,
+    cuda_graphs: bool = True,
+    draft_model: str | None = None,
+    num_draft_tokens: int = 4,
+) -> FastAPI:
     model_dir = resolve_model_dir(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     eos = GenerationConfig.from_pretrained(model_dir).eos_token_id  # Qwen: <|im_end|> and <|endoftext|>
@@ -130,7 +138,8 @@ def build_app(model_name: str, kv_cache_gb: float, max_batch_size: int, cuda_gra
 
     model = load_model(model_name)
     num_blocks = PagedKVPool.blocks_for_memory(model.config, int(kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
-    engine = LLMEngine(model, num_blocks, max_batch_size, use_cuda_graphs=cuda_graphs)
+    speculative = SpeculativeConfig(load_model(draft_model), num_draft_tokens) if draft_model else None
+    engine = LLMEngine(model, num_blocks, max_batch_size, use_cuda_graphs=cuda_graphs, speculative=speculative)
     engine.warmup()
     return create_app(AsyncEngine(engine), tokenizer, model_name, stop_ids)
 
@@ -143,8 +152,17 @@ def main() -> None:
     parser.add_argument("--kv-cache-gb", type=float, default=1.41)
     parser.add_argument("--max-batch-size", type=int, default=64)
     parser.add_argument("--no-cuda-graphs", action="store_true")
+    parser.add_argument("--draft-model", help="enables speculative decoding, e.g. Qwen/Qwen2.5-0.5B-Instruct")
+    parser.add_argument("--num-draft-tokens", type=int, default=4)
     args = parser.parse_args()
-    app = build_app(args.model, args.kv_cache_gb, args.max_batch_size, cuda_graphs=not args.no_cuda_graphs)
+    app = build_app(
+        args.model,
+        args.kv_cache_gb,
+        args.max_batch_size,
+        cuda_graphs=not args.no_cuda_graphs,
+        draft_model=args.draft_model,
+        num_draft_tokens=args.num_draft_tokens,
+    )
     uvicorn.run(app, host=args.host, port=args.port)
 
 
