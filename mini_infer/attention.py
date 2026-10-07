@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from mini_infer.kernels import paged_decode_attention
+from mini_infer.kernels import paged_attention
 from mini_infer.paged_cache import PagedBatch
 
 
@@ -43,15 +43,18 @@ class TorchPagedBackend:
 
 
 class TritonPagedBackend(TorchPagedBackend):
-    """Decode (one new token per sequence) reads blocks in place with a Triton kernel. Everything else,
-    rarer and not on the hot path, uses the PyTorch reference."""
+    """A few new tokens per sequence (decode: 1, speculative verification: k + 1) read blocks in place
+    with a Triton kernel. Everything else, rarer and not on the hot path, uses the PyTorch reference."""
+
+    MAX_KERNEL_ROWS = 64  # new tokens x query heads per k/v head that one kernel program holds
 
     def attend_cached(self, q: Tensor, cache: PagedBatch, layer: int) -> Tensor:
+        H, T = q.shape[1], q.shape[2]
+        rows = T * H // cache.pool.k.shape[2]
         # tl.dot needs tiles of at least 16, so tiny test block sizes use the reference.
-        if q.shape[2] != 1 or cache.pool.block_size < 16:
+        if rows > self.MAX_KERNEL_ROWS or cache.pool.block_size < 16:
             return super().attend_cached(q, cache, layer)
-        # The new token is already written, so each sequence attends over lengths + 1 tokens.
-        return paged_decode_attention(q, cache.pool.k[layer], cache.pool.v[layer], cache.block_tables, cache.lengths_t + 1)
+        return paged_attention(q, cache.pool.k[layer], cache.pool.v[layer], cache.block_tables, cache.lengths_t)
 
 
 def gather_blocks(cache: PagedBatch, layer: int) -> tuple[Tensor, Tensor]:
