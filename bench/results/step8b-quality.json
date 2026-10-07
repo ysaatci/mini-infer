@@ -1,0 +1,30 @@
+{
+  "environment": {
+    "time": "2026-10-07T21:18:22+00:00",
+    "commit": "e60d09b",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "out": "bench/results/step8b-quality.json",
+    "wikitext2_tokens": 299078
+  },
+  "results": [
+    {
+      "engine": "bf16",
+      "workload": "quality",
+      "wikitext2_ppl": 10.807105824147758,
+      "greedy_agreement": 1.0,
+      "weights_gb": 3.088346112
+    },
+    {
+      "engine": "int8",
+      "workload": "quality",
+      "wikitext2_ppl": 10.836999244445753,
+      "greedy_agreement": 0.9824497257769652,
+      "weights_gb": 2.023735296
+    }
+  ],
+  "stats": {}
+}
