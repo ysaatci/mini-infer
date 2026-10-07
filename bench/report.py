@@ -20,12 +20,13 @@ def environment() -> dict:
     }
 
 
-def save_json(path: Path, settings: dict, rows: list[Row]) -> None:
+def save_json(path: Path, settings: dict, rows: list[Row], stats: dict | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "environment": environment(),
         "settings": settings,
         "results": [{"engine": e, "workload": w, **asdict(m)} for e, w, m in rows],
+        "stats": stats or {},
     }
     path.write_text(json.dumps(data, indent=2) + "\n")
 
