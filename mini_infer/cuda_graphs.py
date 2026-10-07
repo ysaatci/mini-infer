@@ -44,8 +44,9 @@ class DecodeGraphRunner:
         self.logits: dict[int, Tensor] = {}
         self._capture()
 
-    def run(self, token_ids: list[list[int]], seq_ids: list[str]) -> Tensor:
+    def run(self, token_ids: list[list[int]] | Tensor, seq_ids: list[str]) -> Tensor:
         """query_len new tokens per sequence -> logits [B, query_len, vocab]. Valid until the next call.
+        token_ids can already be on the GPU (drafted tokens are), which avoids a round trip through the CPU.
         The caller advances the pool's lengths afterwards."""
         B, T = len(seq_ids), self.query_len
         bucket = next(b for b in self.buckets if b >= B)
@@ -53,7 +54,7 @@ class DecodeGraphRunner:
         tables = self.pool.block_table_rows(seq_ids)
         offsets = torch.arange(T)
 
-        self.input_ids[:B].copy_(torch.tensor(token_ids), non_blocking=True)
+        self.input_ids[:B].copy_(token_ids if isinstance(token_ids, Tensor) else torch.tensor(token_ids), non_blocking=True)
         self.positions[:B].copy_(torch.tensor(lengths)[:, None] + offsets, non_blocking=True)
         self.lengths[:B].copy_(torch.tensor(lengths, dtype=torch.int32), non_blocking=True)
         self.block_tables[:B, : len(tables[0])].copy_(torch.tensor(tables, dtype=torch.int32), non_blocking=True)
