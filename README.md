@@ -11,12 +11,15 @@ Built to understand what inference servers like vLLM do, not to replace them.
 | KV cache | Stops recomputing past tokens every step |
 | Continuous batching | GPU sits idle when decoding one request at a time |
 | Paged KV cache | Fixed per-request memory slots waste most of the cache |
-| Speculative decoding | Decoding is memory-bound, so a small model drafts and the big one verifies |
-| int8 weights | Smaller weights are read faster each step |
+| Triton paged-attention kernel | Reading scattered cache blocks by copying them cost half of each step |
+| CUDA graphs | Launching hundreds of small kernels from Python dominated each step |
+| OpenAI-compatible server | Works with existing clients, streams tokens, frees memory on disconnect |
+
+Planned: speculative decoding, int8 weights.
 
 ## Results
 
-To be filled in as each step lands (RTX 5050 8 GB, Qwen2.5-1.5B, bf16).
+To be filled in at the end (RTX 5050 8 GB, Qwen2.5-1.5B, bf16). Raw numbers per step are in `bench/results/`.
 
 ## Run
 
@@ -25,6 +28,15 @@ Linux or WSL2 with an NVIDIA GPU and CUDA 12.8+.
 ```bash
 bash scripts/setup_wsl.sh          # venv + GPU check
 python scripts/download_models.py  # Qwen2.5 0.5B and 1.5B
-python -m bench.run --out bench/results/run.json
+python -m mini_infer.server        # OpenAI-compatible API on localhost:8000
 pytest
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+reply = client.chat.completions.create(
+    model="Qwen/Qwen2.5-1.5B-Instruct", messages=[{"role": "user", "content": "Hello"}]
+)
 ```
