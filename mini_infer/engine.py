@@ -16,7 +16,11 @@ from mini_infer.scheduler import Scheduler
 class TokenOutput:
     request_id: str
     token: int
-    finished: bool
+    finish_reason: str | None  # "stop", "length", or None while the request continues
+
+    @property
+    def finished(self) -> bool:
+        return self.finish_reason is not None
 
 
 class LLMEngine:
@@ -47,7 +51,7 @@ class LLMEngine:
         prompt_ids: list[int],
         max_new_tokens: int,
         params: SamplingParams = SamplingParams(),
-        eos_id: int | None = None,
+        stop_ids: frozenset[int] = frozenset(),
         request_id: str | None = None,
     ) -> str:
         capacity = self.pool.num_blocks * self.pool.block_size
@@ -55,7 +59,7 @@ class LLMEngine:
             # Could never run, even alone with the whole cache.
             raise ValueError(f"prompt + max_new_tokens exceeds KV cache capacity of {capacity} tokens")
         request_id = request_id or str(next(self._ids))
-        self.scheduler.add(Request(request_id, list(prompt_ids), max_new_tokens, params, eos_id))
+        self.scheduler.add(Request(request_id, list(prompt_ids), max_new_tokens, params, frozenset(stop_ids)))
         return request_id
 
     def has_unfinished(self) -> bool:
@@ -101,7 +105,7 @@ class LLMEngine:
 
     def _append(self, request: Request, token: int) -> TokenOutput:
         request.output_ids.append(token)
-        finished = request.is_finished
-        if finished:
+        finish_reason = request.finish_reason
+        if finish_reason is not None:
             self.scheduler.finish(request)
-        return TokenOutput(request.id, token, finished)
+        return TokenOutput(request.id, token, finish_reason)

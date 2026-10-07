@@ -16,7 +16,8 @@ class Request:
     prompt_ids: list[int]
     max_new_tokens: int
     params: SamplingParams
-    eos_id: int | None = None
+    # Tokens that end generation, e.g. Qwen's <|im_end|> and <|endoftext|>. Empty: run to max_new_tokens.
+    stop_ids: frozenset[int] = frozenset()
     output_ids: list[int] = field(default_factory=list)
     status: RequestStatus = RequestStatus.WAITING
 
@@ -26,7 +27,10 @@ class Request:
         return self.prompt_ids + self.output_ids
 
     @property
-    def is_finished(self) -> bool:
+    def finish_reason(self) -> str | None:
+        """OpenAI's terms: "stop" after a stop token, "length" at max_new_tokens, None while running."""
+        if self.output_ids and self.output_ids[-1] in self.stop_ids:
+            return "stop"
         if len(self.output_ids) >= self.max_new_tokens:
-            return True
-        return self.eos_id is not None and bool(self.output_ids) and self.output_ids[-1] == self.eos_id
+            return "length"
+        return None
