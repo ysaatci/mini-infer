@@ -3,7 +3,7 @@
 Goal: a small LLM inference engine written from scratch, with measured numbers for each optimization.
 Model: Qwen2.5-0.5B-Instruct (draft) and Qwen2.5-1.5B-Instruct (target), bf16, fits in 8 GB.
 Stack: Python, PyTorch (cu128), FastAPI. Runs in WSL2 (Smart App Control blocks native wheels on Windows).
-Rules: one commit per step, benchmark after every optimization, tests only where a bug would be silent.
+Rules: small modular commits (one logical change each), SOLID-style modules, benchmark after every optimization, tests only where a bug would be silent.
 
 ## Steps
 
