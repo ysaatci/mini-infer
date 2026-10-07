@@ -22,7 +22,7 @@ class Scheduler:
     one step while newcomers prefill. When blocks run out mid-decode, the newest request is preempted:
     its blocks are freed and it goes back to the front of the queue, to be prefilled again later.
 
-    decode_lookahead(batch_size) says how many tokens a decode step may add per request, so enough
+    decode_lookahead(running requests) says how many tokens a decode step may add per request, so enough
     space is reserved. on_release(request_id) runs whenever a request's memory is freed, for anything
     else holding per-request state (the speculative decoder's draft cache).
     """
@@ -31,7 +31,7 @@ class Scheduler:
         self,
         pool: PagedKVPool,
         max_batch_size: int,
-        decode_lookahead: Callable[[int], int] = lambda batch_size: 1,
+        decode_lookahead: Callable[[list[Request]], int] = lambda requests: 1,
         on_release: Callable[[str], None] = lambda request_id: None,
     ):
         self.pool = pool
@@ -52,7 +52,7 @@ class Scheduler:
         admitted = self._admit()
         if admitted:
             return Batch(prefill=admitted, decode=[])
-        lookahead = self.decode_lookahead(len(self.running))
+        lookahead = self.decode_lookahead(self.running)
         self._reserve_decode_space(lookahead)
         return Batch(prefill=[], decode=list(self.running), lookahead=lookahead)
 
