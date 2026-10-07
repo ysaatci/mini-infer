@@ -104,7 +104,7 @@ class LLMEngine:
     def _decode(self, requests: list[Request]) -> Tensor:
         if self.graphs is not None:
             seq_ids = [r.id for r in requests]
-            logits = self.graphs.decode([r.output_ids[-1] for r in requests], seq_ids)
+            logits = self.graphs.run([[r.output_ids[-1]] for r in requests], seq_ids)[:, -1]
             self.pool.advance(seq_ids, 1)
             return logits
         device = self.pool.k.device
