@@ -30,10 +30,11 @@ class Attention(nn.Module):
         k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
+        mask = None
         if cache is not None:
             # Keys are cached after RoPE, so past tokens never need re-rotating.
-            k, v = cache.update(self.layer_idx, k, v)
-        out = self.backend(q, k, v)
+            k, v, mask = cache.update(self.layer_idx, k, v)
+        out = self.backend(q, k, v, mask)
         return self.o_proj(out.transpose(1, 2).reshape(B, T, -1))
 
 

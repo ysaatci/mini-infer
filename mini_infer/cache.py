@@ -1,9 +1,19 @@
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import torch
 from torch import Tensor
 
 from mini_infer.config import ModelConfig
+
+
+class CachedKV(NamedTuple):
+    """All keys/values so far for one layer, as attention should read them."""
+
+    k: Tensor  # [B, num_kv_heads, S, D]
+    v: Tensor
+    # None: every row has the same length, the backend applies the causal mask itself.
+    # Otherwise a complete bool mask [B, 1, T, S], True where a query may attend (rows differ in length).
+    mask: Tensor | None
 
 
 class KVCache(Protocol):
@@ -14,7 +24,7 @@ class KVCache(Protocol):
         """Number of tokens already stored."""
         ...
 
-    def update(self, layer: int, k: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
+    def update(self, layer: int, k: Tensor, v: Tensor) -> CachedKV:
         """Store new k/v [B, num_kv_heads, T, D] for a layer and return all k/v so far."""
         ...
 
@@ -43,13 +53,13 @@ class StaticKVCache:
     def length(self) -> int:
         return self._length
 
-    def update(self, layer: int, k: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
+    def update(self, layer: int, k: Tensor, v: Tensor) -> CachedKV:
         start, end = self._length, self._length + k.shape[2]
         if end > self.max_len:
             raise ValueError(f"cache full: {end} tokens > max_len {self.max_len}")
         self.k[layer, :, :, start:end] = k
         self.v[layer, :, :, start:end] = v
-        return self.k[layer, :, :, :end], self.v[layer, :, :, :end]
+        return CachedKV(self.k[layer, :, :, :end], self.v[layer, :, :, :end], mask=None)
 
     def advance(self, num_tokens: int) -> None:
         self._length += num_tokens
