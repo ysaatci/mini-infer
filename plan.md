@@ -48,7 +48,10 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Why: makes the engine usable from existing clients and shows it works under concurrent load, not just in a script.
 
 ### 7. Speculative decoding
-- 0.5B drafts k tokens, 1.5B verifies them in one forward pass, accept the matching prefix.
+- 0.5B drafts k tokens, 1.5B verifies them in one forward pass. Rejection sampling (Leviathan et al.) decides acceptance, so output follows the 1.5B's distribution exactly at any temperature; greedy is the one-hot case.
+- Inside the engine and batched: the draft has its own paged cache that catches up lazily (new prompt, resumed after preemption, steps without speculation). Rejected tokens roll back by resetting lengths. Off above a batch-size threshold.
+- The Triton kernel now takes T new tokens per sequence (causal among them), so verification runs in place and as a CUDA graph.
+- Benchmark on real chat prompts, not the repeated passage, which a draft predicts unrealistically well.
 - Report speedup and acceptance rate.
 - Why: decoding is memory-bound, so checking k tokens costs about the same as generating one. If the draft is usually right we get several tokens per big-model pass.
 
@@ -65,11 +68,13 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ```
 mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py
               paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
-              async_engine.py  detokenizer.py  protocol.py  server.py      later: speculative.py
+              async_engine.py  detokenizer.py  protocol.py  server.py  speculative.py
 bench/        single request: workload.py  engines.py  run.py
               batching: batch_workload.py  batch_engines.py  batch_run.py  http_run.py
+              speculative: chat_prompts.json  spec_run.py
               shared: metrics.py  report.py  results/*.json
 tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py  test_detokenizer.py  test_server.py
+              test_speculative_sampling.py
 ```
 
 ## Improvements found along the way
