@@ -21,6 +21,7 @@ from mini_infer.engine import LLMEngine, TokenOutput
 from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.protocol import ChatCompletionRequest, CompletionRequest
+from mini_infer.quant import quantize_model
 from mini_infer.sampling import SamplingParams
 from mini_infer.speculative import SpeculativeConfig
 
@@ -130,6 +131,7 @@ def build_app(
     cuda_graphs: bool = True,
     draft_model: str | None = None,
     num_draft_tokens: int = 2,
+    int8: bool = False,
 ) -> FastAPI:
     model_dir = resolve_model_dir(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
