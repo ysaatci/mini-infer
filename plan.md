@@ -61,7 +61,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Quality: WikiText-2 perplexity and greedy agreement with bf16 on the chat prompts. Report memory, speed, and quality.
 - Why: weights are what decoding reads every step, so smaller weights mean faster decode. Perplexity shows what it costs.
 
-### 9. README
+### 9. README (done)
 - Results table and graphs from the benchmark harness, short explanation of each technique, how to run.
 - Why: this is what a reviewer reads first.
 
