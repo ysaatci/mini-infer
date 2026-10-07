@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from transformers import AutoTokenizer
 
-from bench.batch_engines import BATCH_ENGINES, BatchEngine
+from bench.batch_engines import BATCH_ENGINES, BatchEngine, EngineSettings
 from bench.batch_workload import BatchRequest, make_requests
 from bench.metrics import summarize_batch
 from bench.report import markdown_table, save_json
@@ -44,7 +44,9 @@ def main() -> None:
     parser.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--num-requests", type=int, default=200)
     parser.add_argument("--rate", type=float, default=None, help="requests/s; omit for offline (all at once)")
-    parser.add_argument("--max-batch-size", type=int, default=32)
+    parser.add_argument("--max-batch-size", type=int, default=64)
+    # Step 4's KV memory: 32 slots x 1536 tokens x 28 KB per token (Qwen2.5-1.5B, bf16).
+    parser.add_argument("--kv-cache-gb", type=float, default=1.41)
     parser.add_argument("--max-len", type=int, default=1536, help="longest prompt + output")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, required=True)
@@ -52,7 +54,8 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     requests = make_requests(tokenizer, args.num_requests, args.rate, args.seed)
-    engine = BATCH_ENGINES[args.engine](args.model, args.max_batch_size, args.max_len)
+    settings = EngineSettings(args.model, args.max_batch_size, int(args.kv_cache_gb * 1e9), args.max_len)
+    engine = BATCH_ENGINES[args.engine](settings)
 
     warmup = make_requests(tokenizer, 4, None, seed=999, output_range=(8, 8))
     drive(engine, [BatchRequest(f"warmup-{r.id}", r.prompt_ids, r.output_len, 0.0) for r in warmup])
@@ -64,7 +67,8 @@ def main() -> None:
     workload = "offline" if args.rate is None else f"rate{args.rate:g}"
     rows = [(args.engine, f"{workload}-n{args.num_requests}", metrics)]
     print(markdown_table(rows))
-    save_json(args.out, vars(args) | {"out": str(args.out)}, rows)
+    print(engine.stats())
+    save_json(args.out, vars(args) | {"out": str(args.out)}, rows, engine.stats())
 
 
 if __name__ == "__main__":

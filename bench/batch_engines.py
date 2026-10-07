@@ -2,6 +2,7 @@
 in different venvs (vLLM pins its own torch), and each process only has one of them installed."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
 from bench.batch_workload import BatchRequest
@@ -16,14 +17,30 @@ class BatchEngine(Protocol):
 
     def has_unfinished(self) -> bool: ...
 
+    def stats(self) -> dict:
+        """Engine-specific counters worth recording with the results."""
+        ...
+
+
+@dataclass(frozen=True)
+class EngineSettings:
+    model: str
+    max_batch_size: int
+    kv_cache_bytes: int  # the same KV memory budget for every engine
+    max_len: int  # longest prompt + output
+
 
 class MiniInferBatchEngine:
-    def __init__(self, model_name: str, max_batch_size: int, max_len: int):
+    def __init__(self, settings: EngineSettings):
+        import torch
+
         from mini_infer.engine import LLMEngine
         from mini_infer.loader import load_model
+        from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 
-        # Same KV memory as one max_len slot per batch entry.
-        self.engine = LLMEngine(load_model(model_name), max_batch_size * max_len // 16, max_batch_size)
+        model = load_model(settings.model)
+        num_blocks = PagedKVPool.blocks_for_memory(model.config, settings.kv_cache_bytes, DEFAULT_BLOCK_SIZE, torch.bfloat16)
+        self.engine = LLMEngine(model, num_blocks, settings.max_batch_size)
 
     def add(self, request: BatchRequest) -> None:
         # No eos: every engine generates exactly output_len tokens.
@@ -35,9 +52,12 @@ class MiniInferBatchEngine:
     def has_unfinished(self) -> bool:
         return self.engine.has_unfinished()
 
+    def stats(self) -> dict:
+        return {"preemptions": self.engine.scheduler.num_preemptions}
+
 
 class VllmBatchEngine:
-    def __init__(self, model_name: str, max_batch_size: int, max_len: int):
+    def __init__(self, settings: EngineSettings):
         import os
 
         # Keep vLLM's engine in this process, so step() timing and torch memory stats cover it.
@@ -47,12 +67,13 @@ class VllmBatchEngine:
         from vllm import EngineArgs, LLMEngine
 
         args = EngineArgs(
-            model=model_name,
+            model=settings.model,
             dtype="bfloat16",
-            max_model_len=max_len,
-            max_num_seqs=max_batch_size,  # same batch cap as ours, so the comparison is engine vs engine
+            max_model_len=settings.max_len,
+            max_num_seqs=settings.max_batch_size,  # same batch cap as ours, so the comparison is engine vs engine
+            kv_cache_memory_bytes=settings.kv_cache_bytes,  # same KV memory as ours
+            gpu_memory_utilization=0.8,  # only its startup free-memory check now; the KV size above wins
             enable_prefix_caching=False,  # our engine has none yet
-            gpu_memory_utilization=0.8,
         )
         self.engine = LLMEngine.from_engine_args(args)
         self.seen: dict[str, int] = {}
@@ -75,8 +96,11 @@ class VllmBatchEngine:
     def has_unfinished(self) -> bool:
         return self.engine.has_unfinished_requests()
 
+    def stats(self) -> dict:
+        return {}  # vLLM's scheduler counters aren't exposed through LLMEngine
 
-BATCH_ENGINES: dict[str, Callable[[str, int, int], BatchEngine]] = {
+
+BATCH_ENGINES: dict[str, Callable[[EngineSettings], BatchEngine]] = {
     "mini-infer": MiniInferBatchEngine,
     "vllm": VllmBatchEngine,
 }
