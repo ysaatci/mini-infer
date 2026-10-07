@@ -8,7 +8,6 @@ python -m bench.adaptive_trace --out bench/results/step10-trace.json
 """
 
 import argparse
-import gc
 import random
 import time
 from collections import Counter, defaultdict
@@ -20,6 +19,7 @@ from transformers import AutoTokenizer, GenerationConfig
 from bench.metrics import summarize_batch
 from bench.report import markdown_table, save_json
 from bench.spec_run import PROMPTS, make_policy
+from mini_infer.draft_policy import AdaptiveDraftPolicy
 from mini_infer.engine import LLMEngine
 from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
@@ -78,31 +78,31 @@ def main() -> None:
     num_blocks = PagedKVPool.blocks_for_memory(target.config, int(args.kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
     arrival_s = arrivals()
 
+    # One engine with the policy swapped between runs, so every policy sees the same compiled kernels and
+    # memory state, and runs follow each other closely (separate engines measured clock drift too).
+    policies = {name: make_policy(name) for name in args.policies}
+    adaptive = policies.get("adaptive", AdaptiveDraftPolicy())  # the engine calibrates it at warmup
+    engine = LLMEngine(target, num_blocks, max_batch_size=64, speculative=SpeculativeConfig(draft, adaptive, max_batch_size=16))
+    engine.warmup()
+    arrivals_by_id = {str(i): t for i, t in enumerate(arrival_s)}
+
     rows, trace = [], []
-    for name in args.policies:
-        policy = make_policy(name)
-        speculative = SpeculativeConfig(draft, policy, max_batch_size=16) if policy else None
-        engine = LLMEngine(target, num_blocks, max_batch_size=64, speculative=speculative)
-        engine.warmup()
-        decisions_before = len(policy.decisions) if name == "adaptive" else 0
+    for name, policy in policies.items():
+        engine.speculative.policy = policy
+        decisions_before = len(adaptive.decisions)
         start = time.perf_counter()
         token_times = drive(engine, prompts, arrival_s, stop_ids)
-        arrivals_by_id = {str(i): t for i, t in enumerate(arrival_s)}
         metrics = summarize_batch(token_times, arrivals_by_id, max(t[-1] for t in token_times.values()), 0)
         rows.append((name, "quiet-busy-quiet", metrics))
         print(f"{name:10s} median request {metrics.e2e_p50_s:.2f} s, p99 {metrics.e2e_p99_s:.2f} s", flush=True)
         if name == "adaptive":
-            trace = [(t - start, batch, k) for t, batch, k in list(policy.decisions)[decisions_before:]]
+            trace = [(t - start, batch, k) for t, batch, k in list(adaptive.decisions)[decisions_before:]]
             print(f"  k chosen: {dict(sorted(Counter(k for *_, k in trace).items()))}")
-        # The engine and its scheduler reference each other (bound methods), so only the cycle collector
-        # frees it. Without collecting, earlier engines stay on the GPU and later runs spill to system RAM.
-        del engine
-        gc.collect()
-        torch.cuda.empty_cache()
 
     print("\n" + markdown_table(rows))
     save_json(args.out, vars(args) | {"out": str(args.out), "phases": PHASES, "requests": len(arrival_s)}, rows,
               {"adaptive_trace": trace})
+
 
 if __name__ == "__main__":
     main()

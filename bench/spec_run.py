@@ -11,7 +11,6 @@ python -m bench.spec_run --policies none fixed-2 adaptive --out bench/results/st
 """
 
 import argparse
-import gc
 import json
 import statistics
 import time
@@ -23,7 +22,7 @@ from transformers import AutoTokenizer, GenerationConfig
 
 from bench.metrics import percentile
 from bench.report import markdown_table, save_json
-from mini_infer.draft_policy import AdaptiveDraftPolicy, DraftPolicy, FixedDraftPolicy
+from mini_infer.draft_policy import AdaptiveDraftPolicy, DraftPolicy, FixedDraftPolicy, batch_bucket
 from mini_infer.engine import LLMEngine
 from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
@@ -43,9 +42,9 @@ class SpecMetrics:
     mean_k: float  # drafts per decode step, averaged over the run
 
 
-def make_policy(name: str) -> DraftPolicy | None:
+def make_policy(name: str) -> DraftPolicy:
     if name == "none":
-        return None
+        return FixedDraftPolicy(0)  # k = 0 every step: plain decode
     if name == "adaptive":
         return AdaptiveDraftPolicy()
     return FixedDraftPolicy(int(name.removeprefix("fixed-")))
@@ -112,23 +111,28 @@ def main() -> None:
     target, draft = load(args.model), load(args.draft_model)
     num_blocks = PagedKVPool.blocks_for_memory(target.config, int(args.kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
 
+    # One engine, policies swapped between runs and interleaved at every load level. Separate engines run
+    # minutes apart measured GPU clock drift (up to ~20% on this laptop) as much as policy differences.
+    policies = {name: make_policy(name) for name in args.policies}
+    max_batch = max(args.concurrency)
+    adaptive = policies.get("adaptive", AdaptiveDraftPolicy())  # the engine calibrates it at warmup
+    engine = LLMEngine(target, num_blocks, max_batch, speculative=SpeculativeConfig(draft, adaptive, max_batch_size=max_batch))
+    engine.warmup()
+
     rows = []
-    for name in args.policies:
-        policy = make_policy(name)
-        max_batch = max(args.concurrency)
-        speculative = SpeculativeConfig(draft, policy, max_batch_size=max_batch) if policy else None
-        engine = LLMEngine(target, num_blocks, max_batch_size=max_batch, speculative=speculative)
-        engine.warmup()
-        for temperature in args.temperatures:
-            for concurrency in args.concurrency:
+    for temperature in args.temperatures:
+        for concurrency in args.concurrency:
+            for name, policy in policies.items():
+                engine.speculative.policy = policy
                 metrics = run(engine, prompts, concurrency, SamplingParams(temperature=temperature), stop_ids)
                 label = name + ("-int8" if args.int8 else "")
                 rows.append((label, f"c{concurrency}-t{temperature:g}", metrics))
                 print(f"{label:12s} {rows[-1][1]:10s} {metrics.output_tok_s:7.1f} tok/s  acceptance {metrics.acceptance:.2f}  "
                       f"mean k {metrics.mean_k:.2f}", flush=True)
-        del engine
-        gc.collect()
-        torch.cuda.empty_cache()
+                if name == "adaptive":
+                    bucket = batch_bucket(concurrency)
+                    seconds = {k: round(s * 1e3, 1) for (k, b), s in sorted(policy.step_seconds.items()) if b == bucket}
+                    print(f"    acceptance estimate {policy.global_acceptance:.2f}, step ms at batch {bucket}: {seconds}", flush=True)
 
     print("\n" + markdown_table(rows))
     save_json(args.out, vars(args) | {"out": str(args.out)}, rows)
