@@ -5,6 +5,8 @@ from torch import Tensor
 
 from mini_infer.config import ModelConfig
 
+DEFAULT_BLOCK_SIZE = 16  # vLLM's default: small enough that waste is low, large enough for efficient reads
+
 
 class PagedKVPool:
     """KV memory split into fixed-size blocks. Each sequence owns a list of blocks (its block table).
@@ -17,8 +19,10 @@ class PagedKVPool:
         # [layers, blocks, kv_heads, block_size, head_dim]: one (block, head) tile is contiguous, which is
         # what the attention kernel loads per step.
         shape = (config.num_layers, num_blocks, config.num_kv_heads, block_size, config.head_dim)
-        self.k = torch.empty(shape, device=device, dtype=dtype)
-        self.v = torch.empty(shape, device=device, dtype=dtype)
+        # Zeros, not empty: attention reads whole blocks, including slots not yet written. Masking gives them
+        # zero weight, but 0 * NaN is NaN, so uninitialized memory could poison the output.
+        self.k = torch.zeros(shape, device=device, dtype=dtype)
+        self.v = torch.zeros(shape, device=device, dtype=dtype)
         self.block_size = block_size
         self.num_blocks = num_blocks
         self._free = list(range(num_blocks))
