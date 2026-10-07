@@ -66,14 +66,14 @@ class LLMEngine:
     def _prefill(self, request: Request) -> Tensor:
         # One request per forward: prompts differ in length, and padding them together wastes compute.
         input_ids = torch.tensor([request.prompt_ids], device=self.pool.k.device)
-        return self.model(input_ids, cache=self.pool.view([request.slot]))[:, -1]
+        return self.model(input_ids, cache=self.pool.view([request.slot]), last_token_only=True)[:, -1]
 
     def _decode(self, requests: list[Request]) -> Tensor:
         device = self.pool.k.device
         input_ids = torch.tensor([[r.output_ids[-1]] for r in requests], device=device)
         # A request's next position is the number of tokens it already has in the cache.
         positions = torch.tensor([[self.pool.lengths[r.slot]] for r in requests], device=device)
-        return self.model(input_ids, positions, self.pool.view([r.slot for r in requests]))[:, -1]
+        return self.model(input_ids, positions, self.pool.view([r.slot for r in requests]), last_token_only=True)[:, -1]
 
     def _append(self, request: Request, token: int) -> TokenOutput:
         request.output_ids.append(token)

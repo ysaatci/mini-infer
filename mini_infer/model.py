@@ -79,8 +79,18 @@ class Qwen2ForCausalLM(nn.Module):
         if self.config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
-    def forward(self, input_ids: Tensor, positions: Tensor | None = None, cache: KVCache | None = None) -> Tensor:
-        """input_ids [B, T] -> logits [B, T, vocab]. With a cache, input_ids are only the new tokens."""
+    def forward(
+        self,
+        input_ids: Tensor,
+        positions: Tensor | None = None,
+        cache: KVCache | None = None,
+        last_token_only: bool = False,
+    ) -> Tensor:
+        """input_ids [B, T] -> logits [B, T, vocab]. With a cache, input_ids are only the new tokens.
+
+        last_token_only returns [B, 1, vocab]. Generation only samples from the last position, and
+        logits for a whole prompt are large (1000 tokens x 151936 vocab x 2 bytes = 0.3 GB).
+        """
         T = input_ids.shape[1]
         if positions is None:
             start = cache.length if cache is not None else 0
@@ -88,4 +98,6 @@ class Qwen2ForCausalLM(nn.Module):
         hidden = self.model(input_ids, positions, cache)
         if cache is not None:
             cache.advance(T)
+        if last_token_only:
+            hidden = hidden[:, -1:]
         return self.lm_head(hidden)
