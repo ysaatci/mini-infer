@@ -35,6 +35,11 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Benchmark at step 4's KV memory (1.41 GB) with the batch cap raised from 32 to 64.
 - Why: fixed slots reserve max length per request, so most memory sits unused and limits batch size. Paging wastes at most one block per request, so more requests fit. Step 4 also showed the gather of scattered slots costs ~half of each decode step, which the kernel removes.
 
+### 5b. CUDA graphs (done)
+- Record one decode step per batch-size bucket (1, 2, 4, 8, 16, 24, 32, 48, 64) and replay it. Inputs go through fixed buffers; batches pad up to the bucket with dummy rows that write to a reserved scratch block. Prefill stays eager.
+- Prerequisites: the caller advances the cache (no Python bookkeeping inside the forward), the kernel's split count depends only on batch size, `PagedBatch` can wrap existing buffers.
+- Why: after step 5 a decode step cost ~30 ms whether the batch was 1 or 20, so the floor was CPU launch overhead, not GPU work.
+
 ### 6. OpenAI-compatible server
 - FastAPI `/v1/chat/completions` with streaming, requests feed the scheduler.
 - Why: makes the engine usable from existing clients and shows it works under concurrent load, not just in a script.
@@ -56,7 +61,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 
 ```
 mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py
-              paged_cache.py  attention.py  kernels.py  request.py  scheduler.py  engine.py
+              paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
               later: speculative.py  server.py
 bench/        single request: workload.py  engines.py  run.py
               batching: batch_workload.py  batch_engines.py  batch_run.py
@@ -68,7 +73,9 @@ tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attentio
 
 Ideas noted while building. Each needs a benchmark before/after to earn its place.
 
-- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that. vLLM does this: its batched inter-token latency is ~15 ms vs our ~35 ms. After step 5 it's the clearest remaining gap: a decode step costs ~30 ms whether the batch is 1 or 20, so the floor is fixed per-step overhead, not GPU work.
+- **Done: CUDA graphs for decode (step 5b).** After step 5 a decode step cost ~30 ms whether the batch was 1 or 20: CPU launch overhead, not GPU work. Single request: 36 → 64 tok/s (HF: 33–39). Offline batching: 874 → 985 tok/s (vLLM 1238). At 1–2 req/s, inter-token latency now matches vLLM (13–16 ms).
+- **Chunked prefill.** The remaining gap to vLLM is under heavy load: at 3 req/s our worst-case token latency is 318 ms vs vLLM's 172, because a long prompt's prefill pauses every running request. vLLM splits prompts into chunks and mixes them into decode steps.
+- **Batch-1 kernel splitting.** A single request is split 20 ways; the merge seems to cost more than it saves (batch 1 step 17.3 ms vs batch 4 at 14.1 ms). Capping splits by sequence length should fix it.
 - **Done: paged attention kernel instead of gathering.** Once requests finish at different times their memory is scattered, and reading it as one batch copied every row's cache each layer: 30 ms of a 60 ms decode step at batch 20. The Triton kernel reads blocks in place. Decode step at batch 64: 123 → 56 ms; at batch 20: 44 → 31 ms.
 - **Done: split sequences across programs for small batches.** One program per (sequence, k/v head) put a single request on 2 of the GPU's 20 cores. Small batches now split each sequence into chunks and merge the partial softmaxes in a second Triton kernel. Merging with ~9 PyTorch ops per layer cost more than it saved; one merge kernel fixed that.
 - **Uninitialized KV memory.** Found in step 5: attention reads whole blocks, and masked-out slots get zero weight, but 0 × NaN is NaN. The pool is zeroed once at allocation.
@@ -76,5 +83,4 @@ Ideas noted while building. Each needs a benchmark before/after to earn its plac
 - **Done: logits for the last token only.** Prefill computed logits for every prompt token (151k vocab each) but generation only uses the last one. Step 3 showed TTFT 361 vs 339 ms (HF) and peak memory 3.79 vs 3.30 GB at a 2048-token prompt. In step 4 it became a real bug: a view kept each prefill's full logits alive, ~20 prefills in one step pushed peak memory to 8.1 GB and spilled into system RAM. Fixed with `last_token_only`.
 - **Done: fold GQA groups for masked decode.** SDPA with a padding mask and `enable_gqa` fell back to a kernel ~20× slower (4.3 vs 0.2 ms per layer). Folding the 6 query heads per k/v head into the sequence dimension avoids GQA mode. Batched decode step: 178 → 29 ms.
 - **Fused RoPE / RMSNorm kernels (Triton).** Each is several small elementwise ops today. Fusing them cuts memory reads and launches.
-- **Chunked prefill.** A long prompt blocks every other request while it runs. Splitting it into chunks lets decode steps of other requests interleave (fits after step 4).
 - **Prefix caching.** Requests sharing a system prompt could reuse its KV blocks instead of recomputing them (fits after step 5).
