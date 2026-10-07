@@ -5,6 +5,7 @@ from transformers import AutoTokenizer
 from mini_infer.engine import LLMEngine
 from mini_infer.generate import generate
 from mini_infer.loader import load_model, resolve_model_dir
+from mini_infer.draft_policy import FixedDraftPolicy
 from mini_infer.speculative import SpeculativeConfig
 
 NAME = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -73,25 +74,48 @@ def noisy_draft():
     return draft
 
 
-# 7 blocks, two of which hold graph padding (decode and verify): 80 tokens. The longest request needs 60
-# with its 5-token lookahead, so it fits alone, but three requests growing together get preempted.
-@pytest.mark.parametrize(
-    "num_blocks, cuda_graphs, expect_preemption",
-    [(64, False, False), (64, True, False), (7, True, True)],
-    ids=["eager", "graphs", "graphs-preemption"],
-)
-def test_speculative_greedy_output_matches_the_target_alone(
-    model, prompts, expected, noisy_draft, num_blocks, cuda_graphs, expect_preemption
-):
-    speculative = SpeculativeConfig(noisy_draft, num_draft_tokens=4)
-    engine = LLMEngine(model, num_blocks=num_blocks, max_batch_size=3, use_cuda_graphs=cuda_graphs, speculative=speculative)
+class CyclingDraftPolicy(FixedDraftPolicy):
+    """Changes k every step, including back to 0, so switching and the draft's batched catch-up run."""
+
+    def __init__(self, cycle: list[int]):
+        super().__init__(0)
+        self.cycle, self.step = cycle, 0
+
+    def choose(self, seq_ids: list[str]) -> int:
+        self.step += 1
+        return self.cycle[self.step % len(self.cycle)]
+
+
+def run_to_completion(engine: LLMEngine, prompts) -> dict[str, list[int]]:
     for i, (ids, n) in enumerate(zip(prompts, OUTPUT_LENS)):
         engine.add_request(ids, n, request_id=str(i))
     actual: dict[str, list[int]] = {str(i): [] for i in range(len(PROMPTS))}
     while engine.has_unfinished():
         for out in engine.step():
             actual[out.request_id].append(out.token)
+    return actual
 
-    assert actual == expected
+
+# 6 blocks, one of which holds graph padding (shared by all graph runners): 80 tokens. The longest request
+# needs 60 with its 5-token lookahead, so it fits alone, but three requests growing together get preempted.
+@pytest.mark.parametrize(
+    "num_blocks, cuda_graphs, expect_preemption",
+    [(64, False, False), (64, True, False), (6, True, True)],
+    ids=["eager", "graphs", "graphs-preemption"],
+)
+def test_speculative_greedy_output_matches_the_target_alone(
+    model, prompts, expected, noisy_draft, num_blocks, cuda_graphs, expect_preemption
+):
+    speculative = SpeculativeConfig(noisy_draft, policy=FixedDraftPolicy(4))
+    engine = LLMEngine(model, num_blocks=num_blocks, max_batch_size=3, use_cuda_graphs=cuda_graphs, speculative=speculative)
+
+    assert run_to_completion(engine, prompts) == expected
     assert 0 < engine.speculative.acceptance_rate < 1
     assert (engine.scheduler.num_preemptions > 0) == expect_preemption
+
+
+@pytest.mark.parametrize("cuda_graphs", [False, True], ids=["eager", "graphs"])
+def test_changing_k_every_step_keeps_output_exact(model, prompts, expected, noisy_draft, cuda_graphs):
+    speculative = SpeculativeConfig(noisy_draft, policy=CyclingDraftPolicy([0, 3, 1, 0, 4, 2]))
+    engine = LLMEngine(model, num_blocks=64, max_batch_size=3, use_cuda_graphs=cuda_graphs, speculative=speculative)
+    assert run_to_completion(engine, prompts) == expected
