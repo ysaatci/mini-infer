@@ -66,17 +66,23 @@ class AdaptiveDraftPolicy:
     average. Step times are moving averages per (k, batch bucket), seeded by a calibration run and kept
     up to date as the engine runs, so the policy fits whatever GPU and models it runs on.
 
-    Every explore_every-th decision tries a neighboring k instead of the best one. Acceptance is only
-    observed while speculating, so without this a policy that settles on k = 0 would never notice that
-    the requests had become predictable enough to speculate on.
+    Every explore_every-th decision tries a neighboring k instead of the best one, if it's predicted to
+    be nearly as good. Acceptance is only observed while speculating, so without this a policy that
+    settles on k = 0 would never notice that the requests had become predictable enough to speculate on.
     """
 
     def __init__(
-        self, max_draft_tokens: int = 4, prior_acceptance: float = 0.6, smoothing: float = 0.2, explore_every: int = 10
+        self,
+        max_draft_tokens: int = 4,
+        prior_acceptance: float = 0.6,
+        smoothing: float = 0.2,
+        explore_every: int = 10,
+        explore_margin: float = 0.1,
     ):
         self.max_draft_tokens = max_draft_tokens
         self.smoothing = smoothing  # weight of the newest observation in each moving average
         self.explore_every = explore_every
+        self.explore_margin = explore_margin  # explore a k predicted within this fraction of the best
         self._decisions_made = 0
         self.global_acceptance = prior_acceptance
         self.acceptance: dict[str, float] = {}
@@ -87,21 +93,27 @@ class AdaptiveDraftPolicy:
     def choose(self, seq_ids: list[str]) -> int:
         if self.force_k is not None:
             return self.force_k
-        bucket = batch_bucket(len(seq_ids))
-        rates = [self.acceptance.get(s, self.global_acceptance) for s in seq_ids]
-        best_k, best_throughput = 0, 0.0
-        for k in range(self.max_draft_tokens + 1):
-            seconds = self.step_seconds.get((k, bucket))
-            if seconds is None:
-                continue  # never measured: don't gamble on it
-            throughput = sum(expected_tokens(k, a) for a in rates) / seconds
-            if throughput > best_throughput:
-                best_k, best_throughput = k, throughput
+        throughput = self.predicted_throughput(seq_ids)
+        best_k = max(throughput, key=throughput.get, default=0)
         self._decisions_made += 1
         if self._decisions_made % self.explore_every == 0:
-            best_k = self._neighbor(best_k)
+            neighbor = self._neighbor(best_k)
+            # Only near-ties are worth re-checking. A clearly worse k (more drafts on a busy GPU) costs
+            # real time, and acceptance doesn't depend on load, so a quieter moment can measure it.
+            if throughput.get(neighbor, 0.0) >= (1 - self.explore_margin) * throughput.get(best_k, 0.0):
+                best_k = neighbor
         self.decisions.append((time.perf_counter(), len(seq_ids), best_k))
         return best_k
+
+    def predicted_throughput(self, seq_ids: list[str]) -> dict[int, float]:
+        """Expected tokens per second for each k with a measured step time at this batch size."""
+        bucket = batch_bucket(len(seq_ids))
+        rates = [self.acceptance.get(s, self.global_acceptance) for s in seq_ids]
+        return {
+            k: sum(expected_tokens(k, a) for a in rates) / seconds
+            for k in range(self.max_draft_tokens + 1)
+            if (seconds := self.step_seconds.get((k, bucket))) is not None  # never measured: don't gamble on it
+        }
 
     def _neighbor(self, k: int) -> int:
         """Alternately one above and one below k, kept within 0 .. max_draft_tokens."""

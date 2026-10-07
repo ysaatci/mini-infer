@@ -39,8 +39,14 @@ def test_acceptance_is_tracked_per_request():
     assert policy.acceptance["easy"] > policy.acceptance["hard"]
 
 
-def test_explores_a_neighboring_k_now_and_then():
-    # Plain decode is clearly best, but every 10th decision still tries k = 1 to keep measuring acceptance.
-    policy = policy_with_times({0: 0.010, 1: 0.060}, acceptance=0.5, batch_size=1)
+def test_explores_a_near_tie_now_and_then():
+    # k = 1 is predicted ~3% behind plain decode: every 10th decision re-checks it.
+    policy = policy_with_times({0: 0.010, 1: 0.0155}, acceptance=0.5, batch_size=1)
     choices = [policy.choose(["a"]) for _ in range(20)]
     assert choices.count(1) == 2 and choices[9] == 1 and choices[19] == 1
+
+
+def test_does_not_explore_a_clearly_worse_k():
+    # On a busy GPU k = 1 is far behind; exploring it would just waste steps.
+    policy = policy_with_times({0: 0.010, 1: 0.060}, acceptance=0.5, batch_size=1)
+    assert all(policy.choose(["a"]) == 0 for _ in range(30))
