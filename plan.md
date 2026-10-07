@@ -30,9 +30,10 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Why: a GPU decoding one request is mostly idle. Batching raises throughput, and continuous batching avoids the batch waiting on its slowest request.
 
 ### 5. Paged KV cache
-- Split KV memory into fixed-size blocks, give each request a block table, allocate blocks on demand and free them on finish. Attention gathers keys/values through the table.
-- Measure memory wasted by step 4's fixed slots vs paged.
-- Why: fixed slots reserve max length per request, so most memory sits unused and limits batch size. Paging wastes at most one block per request, so more requests fit.
+- Split KV memory into 16-token blocks, give each request a block table, allocate blocks on demand and free them on finish. Preempt the newest request (free its blocks, re-prefill later) when memory runs out.
+- Triton decode kernel reads blocks in place through the table (no gather), splitting long sequences across programs when the batch is small. A plain PyTorch gather backend is the reference the kernel is tested against.
+- Benchmark at step 4's KV memory (1.41 GB) with the batch cap raised from 32 to 64.
+- Why: fixed slots reserve max length per request, so most memory sits unused and limits batch size. Paging wastes at most one block per request, so more requests fit. Step 4 also showed the gather of scattered slots costs ~half of each decode step, which the kernel removes.
 
 ### 6. OpenAI-compatible server
 - FastAPI `/v1/chat/completions` with streaming, requests feed the scheduler.
@@ -54,20 +55,23 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ## Layout
 
 ```
-mini_infer/   config.py  layers.py  attention.py  model.py  loader.py  cache.py  sampling.py  generate.py
-              request.py  scheduler.py  engine.py      later: speculative.py  server.py
+mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py
+              paged_cache.py  attention.py  kernels.py  request.py  scheduler.py  engine.py
+              later: speculative.py  server.py
 bench/        single request: workload.py  engines.py  run.py
               batching: batch_workload.py  batch_engines.py  batch_run.py
               shared: metrics.py  report.py  results/*.json
-tests/        test_logits.py  test_cache.py  test_engine.py
+tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py
 ```
 
 ## Improvements found along the way
 
 Ideas noted while building. Each needs a benchmark before/after to earn its place.
 
-- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that. vLLM does this: its batched inter-token latency is ~15 ms vs our ~35 ms.
-- **Paged attention kernel instead of gathering (step 5).** Once requests finish at different times their slots are scattered, and reading them as one batch copies every row's cache each layer: 30 ms of a 60 ms decode step at batch 20. A kernel that reads keys/values where they live (through a block table) removes the copy. Plain PyTorch can't express that, so it needs Triton.
+- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that. vLLM does this: its batched inter-token latency is ~15 ms vs our ~35 ms. After step 5 it's the clearest remaining gap: a decode step costs ~30 ms whether the batch is 1 or 20, so the floor is fixed per-step overhead, not GPU work.
+- **Done: paged attention kernel instead of gathering.** Once requests finish at different times their memory is scattered, and reading it as one batch copied every row's cache each layer: 30 ms of a 60 ms decode step at batch 20. The Triton kernel reads blocks in place. Decode step at batch 64: 123 → 56 ms; at batch 20: 44 → 31 ms.
+- **Done: split sequences across programs for small batches.** One program per (sequence, k/v head) put a single request on 2 of the GPU's 20 cores. Small batches now split each sequence into chunks and merge the partial softmaxes in a second Triton kernel. Merging with ~9 PyTorch ops per layer cost more than it saved; one merge kernel fixed that.
+- **Uninitialized KV memory.** Found in step 5: attention reads whole blocks, and masked-out slots get zero weight, but 0 × NaN is NaN. The pool is zeroed once at allocation.
 - **Batched prefill.** Newly admitted requests prefill one forward each. Packing several short prompts into one forward would use the GPU better.
 - **Done: logits for the last token only.** Prefill computed logits for every prompt token (151k vocab each) but generation only uses the last one. Step 3 showed TTFT 361 vs 339 ms (HF) and peak memory 3.79 vs 3.30 GB at a 2048-token prompt. In step 4 it became a real bug: a view kept each prefill's full logits alive, ~20 prefills in one step pushed peak memory to 8.1 GB and spilled into system RAM. Fixed with `last_token_only`.
 - **Done: fold GQA groups for masked decode.** SDPA with a padding mask and `enable_gqa` fell back to a kernel ~20× slower (4.3 vs 0.2 ms per layer). Folding the 6 query heads per k/v head into the sequence dimension avoids GQA mode. Batched decode step: 178 → 29 ms.
