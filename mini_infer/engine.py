@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
+from mini_infer.cuda_graphs import DecodeGraphRunner
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.request import Request
@@ -26,11 +27,18 @@ class LLMEngine:
     """
 
     def __init__(
-        self, model: Qwen2ForCausalLM, num_blocks: int, max_batch_size: int = 64, block_size: int = DEFAULT_BLOCK_SIZE
+        self,
+        model: Qwen2ForCausalLM,
+        num_blocks: int,
+        max_batch_size: int = 64,
+        block_size: int = DEFAULT_BLOCK_SIZE,
+        use_cuda_graphs: bool = True,
     ):
         weight = model.lm_head.weight
         self.model = model
         self.pool = PagedKVPool(model.config, num_blocks, block_size, weight.device, weight.dtype)
+        # Decode steps replay recorded graphs. Prefill stays eager: prompt lengths vary too much to record.
+        self.graphs = DecodeGraphRunner(model, self.pool, max_batch_size) if use_cuda_graphs else None
         self.scheduler = Scheduler(self.pool, max_batch_size)
         self._ids = itertools.count()
 
@@ -77,6 +85,11 @@ class LLMEngine:
         return logits
 
     def _decode(self, requests: list[Request]) -> Tensor:
+        if self.graphs is not None:
+            seq_ids = [r.id for r in requests]
+            logits = self.graphs.decode([r.output_ids[-1] for r in requests], seq_ids)
+            self.pool.advance(seq_ids, 1)
+            return logits
         device = self.pool.k.device
         input_ids = torch.tensor([[r.output_ids[-1]] for r in requests], device=device)
         # A request's next position is the number of tokens it already has in the cache.
