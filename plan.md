@@ -65,6 +65,16 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Results table and graphs from the benchmark harness, short explanation of each technique, how to run.
 - Why: this is what a reviewer reads first.
 
+### 10. Adaptive speculation
+- Pick the number of drafted tokens k each step (0 = plain decode) from the measured acceptance rate and the current batch size, instead of a fixed k and an on/off threshold.
+- Benchmark against fixed k across load levels, including load that changes over time.
+- Why: step 7 showed the best k depends on load: +39% with one request, -19% at eight in flight with k = 2. A fixed setting is wrong somewhere. Goal: never worse than plain decode, close to the best fixed k at every load.
+
+### 11. Batch-invariant deterministic mode
+- Kernels that sum in the same order no matter how many requests share the batch (attention, int8 matmul, norms), so a prompt's output doesn't depend on what else is running.
+- Test: the same prompt alone and inside batches of different sizes gives bit-identical bf16 output. Measure the speed cost.
+- Why: today bf16 output can change with batch composition, because reductions run in a different order. Reproducible outputs matter for evaluation, debugging, and RL training against an inference server.
+
 ## Layout
 
 ```
