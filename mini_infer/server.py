@@ -23,6 +23,7 @@ from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.protocol import ChatCompletionRequest, CompletionRequest
 from mini_infer.quant import quantize_model
 from mini_infer.sampling import SamplingParams
+from mini_infer.draft_policy import AdaptiveDraftPolicy, FixedDraftPolicy
 from mini_infer.speculative import SpeculativeConfig
 
 Tokens = AsyncIterator[TokenOutput]
@@ -130,7 +131,7 @@ def build_app(
     max_batch_size: int,
     cuda_graphs: bool = True,
     draft_model: str | None = None,
-    num_draft_tokens: int = 2,
+    num_draft_tokens: int | None = None,
     int8: bool = False,
 ) -> FastAPI:
     model_dir = resolve_model_dir(model_name)
@@ -141,7 +142,8 @@ def build_app(
     load = (lambda name: quantize_model(load_model(name))) if int8 else load_model
     model = load(model_name)
     num_blocks = PagedKVPool.blocks_for_memory(model.config, int(kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
-    speculative = SpeculativeConfig(load(draft_model), num_draft_tokens) if draft_model else None
+    policy = FixedDraftPolicy(num_draft_tokens) if num_draft_tokens else AdaptiveDraftPolicy()
+    speculative = SpeculativeConfig(load(draft_model), policy) if draft_model else None
     engine = LLMEngine(model, num_blocks, max_batch_size, use_cuda_graphs=cuda_graphs, speculative=speculative)
     engine.warmup()
     return create_app(AsyncEngine(engine), tokenizer, model_name, stop_ids)
@@ -156,7 +158,7 @@ def main() -> None:
     parser.add_argument("--max-batch-size", type=int, default=64)
     parser.add_argument("--no-cuda-graphs", action="store_true")
     parser.add_argument("--draft-model", help="enables speculative decoding, e.g. Qwen/Qwen2.5-0.5B-Instruct")
-    parser.add_argument("--num-draft-tokens", type=int, default=2)
+    parser.add_argument("--num-draft-tokens", type=int, help="fixed k; by default k adapts to load each step")
     parser.add_argument("--int8", action="store_true", help="int8 weights (target and draft)")
     args = parser.parse_args()
     app = build_app(
