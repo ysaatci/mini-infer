@@ -7,8 +7,12 @@ from torch import Tensor
 from transformers import AutoModelForCausalLM
 from transformers.generation.streamers import BaseStreamer
 
+from mini_infer.engine import LLMEngine
 from mini_infer.generate import stream
 from mini_infer.loader import load_model, resolve_model_dir
+from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
+
+KV_CACHE_BYTES = int(1.41e9)  # same budget as the batching benchmark
 
 
 class Engine(Protocol):
@@ -18,14 +22,33 @@ class Engine(Protocol):
 
 
 class MiniInferEngine:
-    def __init__(self, model_name: str, use_cache: bool):
+    """The serving engine (paged cache, Triton kernel, optional CUDA graphs) with one request at a time."""
+
+    def __init__(self, model_name: str, use_cuda_graphs: bool):
+        model = load_model(model_name)
+        num_blocks = PagedKVPool.blocks_for_memory(model.config, KV_CACHE_BYTES, DEFAULT_BLOCK_SIZE, torch.bfloat16)
+        self.engine = LLMEngine(model, num_blocks, max_batch_size=1, use_cuda_graphs=use_cuda_graphs)
+
+    def run(self, prompt_ids: Tensor, max_new_tokens: int) -> list[float]:
+        start = time.perf_counter()
+        self.engine.add_request(prompt_ids[0].tolist(), max_new_tokens)
+        times = []
+        while self.engine.has_unfinished():
+            for _ in self.engine.step():  # step() returns once the token is on the CPU
+                times.append(time.perf_counter() - start)
+        return times
+
+
+class NoCacheEngine:
+    """The step 2 baseline: recompute the whole sequence for every token."""
+
+    def __init__(self, model_name: str):
         self.model = load_model(model_name)
-        self.use_cache = use_cache
 
     def run(self, prompt_ids: Tensor, max_new_tokens: int) -> list[float]:
         start = time.perf_counter()
         times = []
-        for token in stream(self.model, prompt_ids.cuda(), max_new_tokens, use_cache=self.use_cache):
+        for token in stream(self.model, prompt_ids.cuda(), max_new_tokens, use_cache=False):
             token.cpu()  # waits for the GPU, as a server must before sending the token
             times.append(time.perf_counter() - start)
         return times
@@ -72,7 +95,8 @@ class HuggingFaceEngine:
 
 # Factories, so only one engine's weights sit on the GPU at a time.
 ENGINES: dict[str, Callable[[str], Engine]] = {
-    "mini-infer": lambda name: MiniInferEngine(name, use_cache=True),
-    "mini-infer-nocache": lambda name: MiniInferEngine(name, use_cache=False),
+    "mini-infer": lambda name: MiniInferEngine(name, use_cuda_graphs=True),
+    "mini-infer-eager": lambda name: MiniInferEngine(name, use_cuda_graphs=False),
+    "mini-infer-nocache": NoCacheEngine,
     "hf": HuggingFaceEngine,
 }
