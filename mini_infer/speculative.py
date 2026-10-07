@@ -13,8 +13,8 @@ from mini_infer.sampling import probabilities
 @dataclass(frozen=True)
 class SpeculativeConfig:
     draft_model: Qwen2ForCausalLM  # must share the target's vocabulary
-    num_draft_tokens: int = 4  # k: tokens the draft proposes per step
-    max_batch_size: int = 8  # above this the GPU is busy and wasted drafts cost throughput, so plain decode runs
+    num_draft_tokens: int = 2  # k: tokens the draft proposes per step (best measured: bench/results/step7-spec.json)
+    max_batch_size: int = 4  # above this the GPU is busy and wasted drafts cost throughput, so plain decode runs
 
 
 def accept(draft_tokens: Tensor, draft_probs: Tensor, target_probs: Tensor, generator: torch.Generator | None = None):

@@ -129,7 +129,7 @@ def build_app(
     max_batch_size: int,
     cuda_graphs: bool = True,
     draft_model: str | None = None,
-    num_draft_tokens: int = 4,
+    num_draft_tokens: int = 2,
 ) -> FastAPI:
     model_dir = resolve_model_dir(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
@@ -153,7 +153,7 @@ def main() -> None:
     parser.add_argument("--max-batch-size", type=int, default=64)
     parser.add_argument("--no-cuda-graphs", action="store_true")
     parser.add_argument("--draft-model", help="enables speculative decoding, e.g. Qwen/Qwen2.5-0.5B-Instruct")
-    parser.add_argument("--num-draft-tokens", type=int, default=4)
+    parser.add_argument("--num-draft-tokens", type=int, default=2)
     args = parser.parse_args()
     app = build_app(
         args.model,
