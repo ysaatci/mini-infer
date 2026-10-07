@@ -71,7 +71,10 @@ class LLMEngine:
         # One request per forward: prompts differ in length, and padding them together wastes compute.
         # A preempted request re-runs its prompt plus what it had generated, then continues.
         input_ids = torch.tensor([request.all_ids], device=self.pool.k.device)
-        return self.model(input_ids, cache=self.pool.view([request.id]), last_token_only=True)[:, -1]
+        cache = self.pool.view([request.id])
+        logits = self.model(input_ids, cache=cache, last_token_only=True)[:, -1]
+        cache.advance(input_ids.shape[1])
+        return logits
 
     def _decode(self, requests: list[Request]) -> Tensor:
         device = self.pool.k.device
@@ -79,7 +82,9 @@ class LLMEngine:
         # A request's next position is the number of tokens it already has in the cache.
         positions = torch.tensor([[self.pool.lengths[r.id]] for r in requests], device=device)
         cache = self.pool.view([r.id for r in requests])
-        return self.model(input_ids, positions, cache, last_token_only=True)[:, -1]
+        logits = self.model(input_ids, positions, cache, last_token_only=True)[:, -1]
+        cache.advance(1)
+        return logits
 
     def _append(self, request: Request, token: int) -> TokenOutput:
         request.output_ids.append(token)

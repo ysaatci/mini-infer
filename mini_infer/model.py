@@ -85,6 +85,10 @@ class Qwen2ForCausalLM(nn.Module):
     ) -> Tensor:
         """input_ids [B, T] -> logits [B, T, vocab]. With a cache, input_ids are only the new tokens.
 
+        The model writes the new tokens' k/v into the cache but doesn't advance its lengths: the caller
+        owns sequence state and calls cache.advance(T) afterwards. Keeping the forward free of that
+        bookkeeping is also what lets it be recorded as a CUDA graph.
+
         last_token_only returns [B, 1, vocab]. Generation only samples from the last position, and
         logits for a whole prompt are large (1000 tokens x 151936 vocab x 2 bytes = 0.3 GB).
         """
@@ -93,8 +97,6 @@ class Qwen2ForCausalLM(nn.Module):
             start = cache.length if cache is not None else 0
             positions = torch.arange(start, start + T, device=input_ids.device).expand_as(input_ids)
         hidden = self.model(input_ids, positions, cache)
-        if cache is not None:
-            cache.advance(T)
         if last_token_only:
             hidden = hidden[:, -1:]
         return self.lm_head(hidden)

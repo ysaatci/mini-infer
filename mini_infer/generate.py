@@ -38,6 +38,8 @@ def stream(
     for _ in range(max_new_tokens):
         # Without a cache the model must re-read the whole sequence to produce one token.
         logits = model(next_input if use_cache else tokens, cache=cache, last_token_only=True)[:, -1]
+        if cache is not None:
+            cache.advance(next_input.shape[1])
         next_token = sample(logits, params, generator)
         if eos_id is not None:
             next_token = next_token.masked_fill(finished, eos_id)
