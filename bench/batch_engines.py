@@ -28,6 +28,7 @@ class EngineSettings:
     max_batch_size: int
     kv_cache_bytes: int  # the same KV memory budget for every engine
     max_len: int  # longest prompt + output
+    int8: bool = False  # int8 weights (mini-infer only)
 
 
 class MiniInferBatchEngine:
@@ -39,6 +40,10 @@ class MiniInferBatchEngine:
         from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 
         model = load_model(settings.model)
+        if settings.int8:
+            from mini_infer.quant import quantize_model
+
+            model = quantize_model(model)
         num_blocks = PagedKVPool.blocks_for_memory(model.config, settings.kv_cache_bytes, DEFAULT_BLOCK_SIZE, torch.bfloat16)
         self.engine = LLMEngine(model, num_blocks, settings.max_batch_size)
 

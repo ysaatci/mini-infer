@@ -23,6 +23,7 @@ from bench.report import markdown_table, save_json
 from mini_infer.engine import LLMEngine
 from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
+from mini_infer.quant import quantize_model
 from mini_infer.sampling import SamplingParams
 from mini_infer.speculative import SpeculativeConfig
 
@@ -78,6 +79,7 @@ def main() -> None:
     parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 4, 8])
     parser.add_argument("--temperatures", nargs="+", type=float, default=[0.0, 0.7])
     parser.add_argument("--kv-cache-gb", type=float, default=1.41)
+    parser.add_argument("--int8", action="store_true", help="int8 weights for target and draft")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
@@ -90,7 +92,8 @@ def main() -> None:
                   add_special_tokens=False).input_ids
         for p in PROMPTS
     ]
-    target, draft = load_model(args.model), load_model(args.draft_model)
+    load = (lambda name: quantize_model(load_model(name))) if args.int8 else load_model
+    target, draft = load(args.model), load(args.draft_model)
     num_blocks = PagedKVPool.blocks_for_memory(target.config, int(args.kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
 
     rows = []
@@ -101,7 +104,8 @@ def main() -> None:
         for temperature in args.temperatures:
             for concurrency in args.concurrency:
                 metrics = run(engine, prompts, concurrency, SamplingParams(temperature=temperature), stop_ids)
-                rows.append((f"k={k}" if k else "no-spec", f"c{concurrency}-t{temperature:g}", metrics))
+                label = (f"k={k}" if k else "no-spec") + ("-int8" if args.int8 else "")
+                rows.append((label, f"c{concurrency}-t{temperature:g}", metrics))
                 print(f"{rows[-1][0]:8s} {rows[-1][1]:10s} {metrics.output_tok_s:7.1f} tok/s  acceptance {metrics.acceptance:.2f}", flush=True)
         del engine
         gc.collect()

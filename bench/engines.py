@@ -11,6 +11,7 @@ from mini_infer.engine import LLMEngine
 from mini_infer.generate import stream
 from mini_infer.loader import load_model, resolve_model_dir
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
+from mini_infer.quant import quantize_model
 
 KV_CACHE_BYTES = int(1.41e9)  # same budget as the batching benchmark
 
@@ -24,8 +25,8 @@ class Engine(Protocol):
 class MiniInferEngine:
     """The serving engine (paged cache, Triton kernel, optional CUDA graphs) with one request at a time."""
 
-    def __init__(self, model_name: str, use_cuda_graphs: bool):
-        model = load_model(model_name)
+    def __init__(self, model_name: str, use_cuda_graphs: bool, int8: bool = False):
+        model = quantize_model(load_model(model_name)) if int8 else load_model(model_name)
         num_blocks = PagedKVPool.blocks_for_memory(model.config, KV_CACHE_BYTES, DEFAULT_BLOCK_SIZE, torch.bfloat16)
         self.engine = LLMEngine(model, num_blocks, max_batch_size=1, use_cuda_graphs=use_cuda_graphs)
 
@@ -97,6 +98,7 @@ class HuggingFaceEngine:
 ENGINES: dict[str, Callable[[str], Engine]] = {
     "mini-infer": lambda name: MiniInferEngine(name, use_cuda_graphs=True),
     "mini-infer-eager": lambda name: MiniInferEngine(name, use_cuda_graphs=False),
+    "mini-infer-int8": lambda name: MiniInferEngine(name, use_cuda_graphs=True, int8=True),
     "mini-infer-nocache": NoCacheEngine,
     "hf": HuggingFaceEngine,
 }
