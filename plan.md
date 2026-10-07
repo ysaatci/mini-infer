@@ -55,17 +55,22 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 
 ```
 mini_infer/   config.py  layers.py  attention.py  model.py  loader.py  cache.py  sampling.py  generate.py
-              later: scheduler.py  speculative.py  server.py
-bench/        workload.py  engines.py  metrics.py  report.py  run.py  results/*.json
-tests/        test_logits.py  test_cache.py
+              request.py  scheduler.py  engine.py      later: speculative.py  server.py
+bench/        single request: workload.py  engines.py  run.py
+              batching: batch_workload.py  batch_engines.py  batch_run.py
+              shared: metrics.py  report.py  results/*.json
+tests/        test_logits.py  test_cache.py  test_engine.py
 ```
 
 ## Improvements found along the way
 
 Ideas noted while building. Each needs a benchmark before/after to earn its place.
 
-- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that.
-- **Logits for the last token only during prefill.** Prefill computes logits for every prompt token (151k vocab each) but generation only uses the last one. Wasted compute and memory that grows with prompt length. Step 3 benchmark confirms it: at a 2048-token prompt our TTFT is 361 ms vs HF's 339 ms, and peak memory is 3.79 GB vs 3.30 GB (2048 × 151936 bf16 logits = 0.62 GB). HF already does this.
+- **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that. vLLM does this: its batched inter-token latency is ~15 ms vs our ~35 ms.
+- **Paged attention kernel instead of gathering (step 5).** Once requests finish at different times their slots are scattered, and reading them as one batch copies every row's cache each layer: 30 ms of a 60 ms decode step at batch 20. A kernel that reads keys/values where they live (through a block table) removes the copy. Plain PyTorch can't express that, so it needs Triton.
+- **Batched prefill.** Newly admitted requests prefill one forward each. Packing several short prompts into one forward would use the GPU better.
+- **Done: logits for the last token only.** Prefill computed logits for every prompt token (151k vocab each) but generation only uses the last one. Step 3 showed TTFT 361 vs 339 ms (HF) and peak memory 3.79 vs 3.30 GB at a 2048-token prompt. In step 4 it became a real bug: a view kept each prefill's full logits alive, ~20 prefills in one step pushed peak memory to 8.1 GB and spilled into system RAM. Fixed with `last_token_only`.
+- **Done: fold GQA groups for masked decode.** SDPA with a padding mask and `enable_gqa` fell back to a kernel ~20× slower (4.3 vs 0.2 ms per layer). Folding the 6 query heads per k/v head into the sequence dimension avoids GQA mode. Batched decode step: 178 → 29 ms.
 - **Fused RoPE / RMSNorm kernels (Triton).** Each is several small elementwise ops today. Fusing them cuts memory reads and launches.
 - **Chunked prefill.** A long prompt blocks every other request while it runs. Splitting it into chunks lets decode steps of other requests interleave (fits after step 4).
 - **Prefix caching.** Requests sharing a system prompt could reuse its KV blocks instead of recomputing them (fits after step 5).
