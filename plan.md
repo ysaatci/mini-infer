@@ -55,8 +55,10 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Report speedup and acceptance rate.
 - Why: decoding is memory-bound, so checking k tokens costs about the same as generating one. If the draft is usually right we get several tokens per big-model pass.
 
-### 8. int8 weight quantization (stretch)
-- Per-channel int8 weights, dequantize in the matmul. Report memory, speed, and perplexity change.
+### 8. int8 weight quantization (done)
+- Per-output-channel int8 weights (symmetric, max |w| maps to 127). A Triton matmul loads int8 and converts in registers, so only int8 bytes cross memory; used up to 64 rows (decode, verification). Prefill dequantizes one layer at a time for cuBLAS, since it is compute-bound.
+- All decoder linears plus the output head (its own int8 copy; the embedding stays bf16, a lookup reads few rows).
+- Quality: WikiText-2 perplexity and greedy agreement with bf16 on the chat prompts. Report memory, speed, and quality.
 - Why: weights are what decoding reads every step, so smaller weights mean faster decode. Perplexity shows what it costs.
 
 ### 9. README
@@ -66,15 +68,16 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ## Layout
 
 ```
-mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py
+mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py  quant.py
               paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
               async_engine.py  detokenizer.py  protocol.py  server.py  speculative.py
 bench/        single request: workload.py  engines.py  run.py
               batching: batch_workload.py  batch_engines.py  batch_run.py  http_run.py
               speculative: chat_prompts.json  spec_run.py
+              quality: quality.py
               shared: metrics.py  report.py  results/*.json
 tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py  test_detokenizer.py  test_server.py
-              test_speculative_sampling.py
+              test_speculative_sampling.py  test_quant.py
 ```
 
 ## Improvements found along the way
