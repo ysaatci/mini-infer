@@ -20,7 +20,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - First version recomputes the whole sequence every token. Then add a contiguous KV cache so each step processes one token.
 - Why: the no-cache version is the baseline that shows the cost (quadratic work). The cache is the first real optimization and the base for everything else.
 
-### 3. Benchmark harness
+### 3. Benchmark harness (done)
 - Fixed prompt set, fixed output length. Report tokens/s, time to first token, p50/p99 latency, peak GPU memory. Run against HF `generate` too.
 - Why: built now so every later step has a before/after. Without it, claims in the README are guesses.
 
@@ -65,7 +65,7 @@ tests/        test_logits.py  test_cache.py
 Ideas noted while building. Each needs a benchmark before/after to earn its place.
 
 - **CUDA graphs for decode.** Step 2 decodes at ~40 tok/s on the 1.5B model. The GPU's memory bandwidth allows ~100. The gap is probably CPU overhead: hundreds of small kernel launches per token. Recording one decode step as a CUDA graph and replaying it removes that.
-- **Logits for the last token only during prefill.** Prefill computes logits for every prompt token (151k vocab each) but generation only uses the last one. Wasted compute and memory that grows with prompt length.
+- **Logits for the last token only during prefill.** Prefill computes logits for every prompt token (151k vocab each) but generation only uses the last one. Wasted compute and memory that grows with prompt length. Step 3 benchmark confirms it: at a 2048-token prompt our TTFT is 361 ms vs HF's 339 ms, and peak memory is 3.79 GB vs 3.30 GB (2048 × 151936 bf16 logits = 0.62 GB). HF already does this.
 - **Fused RoPE / RMSNorm kernels (Triton).** Each is several small elementwise ops today. Fusing them cuts memory reads and launches.
 - **Chunked prefill.** A long prompt blocks every other request while it runs. Splitting it into chunks lets decode steps of other requests interleave (fits after step 4).
 - **Prefix caching.** Requests sharing a system prompt could reuse its KV blocks instead of recomputing them (fits after step 5).
