@@ -25,4 +25,6 @@ Linux or WSL2 with an NVIDIA GPU and CUDA 12.8+.
 ```bash
 bash scripts/setup_wsl.sh          # venv + GPU check
 python scripts/download_models.py  # Qwen2.5 0.5B and 1.5B
+python -m bench.run --out bench/results/run.json
+pytest
 ```
