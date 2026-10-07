@@ -6,6 +6,7 @@ from mini_infer.paged_cache import PagedBatch, PagedKVPool
 
 # Batch sizes with a recorded graph. A step runs in the smallest bucket that fits, padded with dummy rows.
 BATCH_BUCKETS = (1, 2, 4, 8, 16, 24, 32, 48, 64)
+PADDING_SEQ = "__padding__"
 
 
 class DecodeGraphRunner:
@@ -32,10 +33,10 @@ class DecodeGraphRunner:
         # Dummy rows write their query_len tokens' k/v into this block, never into a real sequence's.
         if query_len > pool.block_size:
             raise ValueError("padding rows must fit in one block")
-        padding_seq = f"__padding_{id(self)}__"  # one per runner: several runners can share a pool
-        if not pool.reserve(padding_seq, query_len):
+        # Shared by every runner on this pool: only one graph runs at a time, and padding writes are discarded.
+        if not pool.reserve(PADDING_SEQ, query_len):
             raise RuntimeError("no free block for CUDA graph padding")
-        self.padding_block = pool.tables[padding_seq][0]
+        self.padding_block = pool.tables[PADDING_SEQ][0]
 
         rows, device = self.buckets[-1], pool.k.device
         self.input_ids = torch.zeros(rows, query_len, dtype=torch.long, device=device)
