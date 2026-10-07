@@ -1,9 +1,12 @@
-from dataclasses import dataclass
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
 
 import torch
 from torch import Tensor
 
 from mini_infer.cuda_graphs import DecodeGraphRunner
+from mini_infer.draft_policy import AdaptiveDraftPolicy, DraftPolicy
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.paged_cache import PagedKVPool
 from mini_infer.request import Request
@@ -13,8 +16,10 @@ from mini_infer.sampling import probabilities
 @dataclass(frozen=True)
 class SpeculativeConfig:
     draft_model: Qwen2ForCausalLM  # must share the target's vocabulary
-    num_draft_tokens: int = 2  # k: tokens the draft proposes per step (best measured: bench/results/step7-spec.json)
-    max_batch_size: int = 4  # above this the GPU is busy and wasted drafts cost throughput, so plain decode runs
+    # Picks k each step. Adaptive by default; FixedDraftPolicy(k) reproduces a fixed setting.
+    policy: DraftPolicy = field(default_factory=AdaptiveDraftPolicy)
+    max_draft_tokens: int = 4  # verify graphs are recorded for k = 1 .. this
+    max_batch_size: int = 16  # never speculate above this many requests, so no graphs are recorded for more
 
 
 def accept(draft_tokens: Tensor, draft_probs: Tensor, target_probs: Tensor, generator: torch.Generator | None = None):
@@ -56,6 +61,8 @@ class SpeculativeDecoder:
     catches up lazily: before drafting, any tokens it hasn't seen (a new prompt, a request resumed after
     preemption, steps that ran without speculation) are run through it. Rejected tokens are rolled back
     by resetting lengths; their stale k/v are simply overwritten later.
+
+    k can change from step to step (the policy decides), so there is a recorded verify graph per k.
     """
 
     def __init__(self, target: Qwen2ForCausalLM, target_pool: PagedKVPool, config: SpeculativeConfig, use_cuda_graphs: bool):
@@ -64,13 +71,21 @@ class SpeculativeDecoder:
             raise ValueError("draft and target models must share a vocabulary")
         self.target, self.draft = target, draft
         self.target_pool = target_pool
-        self.k = config.num_draft_tokens
+        self.policy = config.policy
+        self.max_draft_tokens = config.max_draft_tokens
+        self.max_batch_size = config.max_batch_size
         # As many blocks as the target: the draft never holds more tokens per request than the target.
         self.draft_pool = PagedKVPool(draft.config, target_pool.num_blocks, target_pool.block_size, draft.device, draft.dtype)
-        self.draft_graphs = self.verify_graphs = None
+        self.draft_graphs = None
+        self.verify_graphs: dict[int, DecodeGraphRunner] = {}
         if use_cuda_graphs:
-            self.draft_graphs = DecodeGraphRunner(draft, self.draft_pool, config.max_batch_size)
-            self.verify_graphs = DecodeGraphRunner(target, target_pool, config.max_batch_size, query_len=self.k + 1)
+            # One memory pool for all of them: only one graph runs at a time.
+            memory_pool = torch.cuda.graph_pool_handle()
+            self.draft_graphs = DecodeGraphRunner(draft, self.draft_pool, config.max_batch_size, memory_pool=memory_pool)
+            self.verify_graphs = {
+                k: DecodeGraphRunner(target, target_pool, config.max_batch_size, query_len=k + 1, memory_pool=memory_pool)
+                for k in range(1, config.max_draft_tokens + 1)
+            }
         self.num_drafted = 0
         self.num_accepted = 0
 
@@ -80,15 +95,18 @@ class SpeculativeDecoder:
 
     def release(self, seq_id: str) -> None:
         self.draft_pool.free(seq_id)
+        self.policy.release(seq_id)
 
     @torch.inference_mode()
-    def step(self, requests: list[Request]) -> list[list[int]] | None:
+    def step(self, requests: list[Request], k: int) -> list[list[int]] | None:
         """New tokens per request (1 to k + 1 each), with both caches advanced to match.
         None if the draft cache has no room this step; the caller then decodes normally.
         The target pool must already have room for k + 1 more tokens per request."""
         seq_ids = [r.id for r in requests]
-        if not self._catch_up_draft(requests):
+        if not self._catch_up_draft(requests, k):
             return None
+        # Timed after catch-up: the policy compares the cost of a step with k drafts against plain decode.
+        start = time.perf_counter()
         params = [r.params for r in requests]
         all_greedy = all(p.temperature == 0 for p in params)
         context = [self.target_pool.lengths[s] for s in seq_ids]  # both caches hold all but the last token
@@ -96,9 +114,9 @@ class SpeculativeDecoder:
         # Draft k tokens, one forward each, plus one more forward that only stores the k-th token's k/v.
         current = torch.tensor([[r.output_ids[-1]] for r in requests], device=self.draft_pool.k.device)
         draft_tokens, draft_probs = [], []
-        for i in range(self.k + 1):
+        for i in range(k + 1):
             logits = self._forward(self.draft, self.draft_pool, self.draft_graphs, current, seq_ids)[:, -1]
-            if i == self.k:
+            if i == k:
                 break
             q = probabilities(logits, params)
             # One-hot rows (greedy) always give their top token; argmax gets it without sampling 152k entries.
@@ -109,7 +127,8 @@ class SpeculativeDecoder:
 
         # Verify: the last accepted token plus the k drafts, all in one target forward.
         verify_input = torch.cat([torch.tensor([[r.output_ids[-1]] for r in requests], device=draft_tokens.device), draft_tokens], dim=1)
-        logits = self._forward(self.target, self.target_pool, self.verify_graphs, verify_input, seq_ids)  # [B, k+1, V]
+        verify_graphs = self.verify_graphs.get(k)
+        logits = self._forward(self.target, self.target_pool, verify_graphs, verify_input, seq_ids)  # [B, k+1, V]
         B, T, V = logits.shape
         target_probs = probabilities(logits.reshape(B * T, V), [p for p in params for _ in range(T)]).view(B, T, V)
         num_accepted, next_token = accept(draft_tokens, torch.stack(draft_probs, dim=1), target_probs)
@@ -121,21 +140,36 @@ class SpeculativeDecoder:
             n = num_accepted[i]
             self.target_pool.lengths[seq_id] = self.draft_pool.lengths[seq_id] = context[i] + n + 1
             new_tokens.append(drafts[i][:n] + [next_token[i]])
-        self.num_drafted += self.k * B
+            self.policy.record_acceptance(seq_id, n, k)
+        self.policy.record_step(k, B, time.perf_counter() - start)
+        self.num_drafted += k * B
         self.num_accepted += sum(num_accepted)
         return new_tokens
 
-    def _catch_up_draft(self, requests: list[Request]) -> bool:
-        """Bring each draft cache to "every known token but the last", and reserve room for drafting."""
+    def _catch_up_draft(self, requests: list[Request], k: int) -> bool:
+        """Bring each draft cache to "every known token but the last", and reserve room for drafting.
+
+        Requests missing the same number of tokens catch up together in one forward. After the policy
+        switches speculation off and back on, every request is behind by the same few tokens, so this
+        is one small batched forward instead of one per request.
+        """
+        groups: dict[tuple[int, bool], list[Request]] = defaultdict(list)
         for request in requests:
-            known = request.all_ids
-            missing = known[self.draft_pool.lengths.get(request.id, 0) : -1]
-            if not self.draft_pool.reserve(request.id, len(missing) + self.k + 1):
+            have = self.draft_pool.lengths.get(request.id, 0)
+            missing = len(request.all_ids) - 1 - have
+            if not self.draft_pool.reserve(request.id, missing + k + 1):
                 return False
             if missing:
-                cache = self.draft_pool.view([request.id])
-                self.draft(torch.tensor([missing], device=self.draft_pool.k.device), cache=cache, last_token_only=True)
-                cache.advance(len(missing))
+                # Fresh caches and ones with history take different attention paths, so they don't mix.
+                groups[(missing, have > 0)].append(request)
+        for (missing, _), group in groups.items():
+            seq_ids = [r.id for r in group]
+            have = [self.draft_pool.lengths[s] for s in seq_ids]
+            tokens = torch.tensor([r.all_ids[h : h + missing] for r, h in zip(group, have)], device=self.draft_pool.k.device)
+            cache = self.draft_pool.view(seq_ids)
+            positions = cache.lengths_t[:, None].long() + torch.arange(missing, device=tokens.device)
+            self.draft(tokens, positions, cache, last_token_only=True)
+            cache.advance(missing)
         return True
 
     @staticmethod
