@@ -63,6 +63,14 @@ class LLMEngine:
         self.scheduler.add(Request(request_id, list(prompt_ids), max_new_tokens, params, frozenset(stop_ids)))
         return request_id
 
+    def warmup(self) -> None:
+        """Run a greedy and a sampled request once. CUDA loads kernels lazily, so without this the first
+        real request using each path pays for it (~0.6 s measured for the first sampled request)."""
+        for params in (SamplingParams(), SamplingParams(temperature=1.0, top_p=0.9)):
+            self.add_request([0] * 8, 4, params, request_id="warmup")
+            while self.has_unfinished():
+                self.step()
+
     def has_unfinished(self) -> bool:
         return self.scheduler.has_unfinished()
 
