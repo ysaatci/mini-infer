@@ -34,13 +34,15 @@ def probabilities(logits: Tensor, params: list[SamplingParams]) -> Tensor:
     Temperature and top-p applied. Greedy rows are one-hot on their top token, so greedy is just a
     special case of sampling, which speculative decoding's acceptance rule relies on.
     """
+    one_hot = torch.zeros_like(logits, dtype=torch.float32).scatter_(-1, logits.argmax(-1, keepdim=True), 1.0)
+    if all(p.temperature == 0 for p in params):
+        return one_hot  # skip the softmax and the vocabulary-wide sort of top-p
     temperature = logits.new_tensor([p.temperature for p in params], dtype=torch.float32)
     top_p = logits.new_tensor([p.top_p for p in params], dtype=torch.float32)
     greedy = temperature == 0
     # Greedy rows get temperature 1 here only to avoid dividing by zero; they're replaced below.
     probs = torch.softmax(logits.float() / temperature.masked_fill(greedy, 1)[:, None], dim=-1)
     probs = _top_p_filter(probs, top_p)
-    one_hot = torch.zeros_like(probs).scatter_(-1, logits.argmax(-1, keepdim=True), 1.0)
     return torch.where(greedy[:, None], one_hot, probs)
 
 
