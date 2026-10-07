@@ -41,7 +41,10 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Why: after step 5 a decode step cost ~30 ms whether the batch was 1 or 20, so the floor was CPU launch overhead, not GPU work.
 
 ### 6. OpenAI-compatible server
-- FastAPI `/v1/chat/completions` with streaming, requests feed the scheduler.
+- FastAPI `/v1/chat/completions`, `/v1/completions` (streaming and not) and `/v1/models`.
+- The engine loop runs on a background thread; the event loop sends it add/abort commands through a thread-safe inbox and gets tokens back through per-request asyncio queues. A client disconnect aborts its request and frees its blocks.
+- Incremental detokenizer so streamed text never splits a multi-byte character.
+- Verified with the official `openai` client; HTTP load test with the same workloads as the engine benchmark.
 - Why: makes the engine usable from existing clients and shows it works under concurrent load, not just in a script.
 
 ### 7. Speculative decoding
@@ -62,11 +65,11 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ```
 mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py
               paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
-              later: speculative.py  server.py
+              async_engine.py  detokenizer.py  protocol.py  server.py      later: speculative.py
 bench/        single request: workload.py  engines.py  run.py
-              batching: batch_workload.py  batch_engines.py  batch_run.py
+              batching: batch_workload.py  batch_engines.py  batch_run.py  http_run.py
               shared: metrics.py  report.py  results/*.json
-tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py
+tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py  test_detokenizer.py  test_server.py
 ```
 
 ## Improvements found along the way
