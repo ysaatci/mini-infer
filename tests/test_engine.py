@@ -38,12 +38,16 @@ def expected(model, prompts):
     }
 
 
-# 64 blocks fit everything. With 5 blocks (80 tokens) the longest request still fits alone (55 tokens),
-# but three running requests outgrow memory and get preempted.
-@pytest.mark.parametrize("num_blocks, expect_preemption", [(64, False), (5, True)])
-def test_batched_engine_matches_single_request_generation(model, prompts, expected, num_blocks, expect_preemption):
+# 64 blocks fit everything. With 5 blocks (80 tokens, one goes to CUDA graph padding) the longest
+# request still fits alone (55 tokens), but three running requests outgrow memory and get preempted.
+@pytest.mark.parametrize(
+    "num_blocks, cuda_graphs, expect_preemption",
+    [(64, False, False), (64, True, False), (5, True, True)],
+    ids=["eager", "graphs", "graphs-preemption"],
+)
+def test_batched_engine_matches_single_request_generation(model, prompts, expected, num_blocks, cuda_graphs, expect_preemption):
     # Batch cap below the request count: forces requests to wait, join mid-run, and reuse freed blocks.
-    engine = LLMEngine(model, num_blocks=num_blocks, max_batch_size=3)
+    engine = LLMEngine(model, num_blocks=num_blocks, max_batch_size=3, use_cuda_graphs=cuda_graphs)
     for i, (ids, n) in enumerate(zip(prompts, OUTPUT_LENS)):
         engine.add_request(ids, n, request_id=str(i))
     actual: dict[str, list[int]] = {str(i): [] for i in range(len(PROMPTS))}
