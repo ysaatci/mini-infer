@@ -33,10 +33,10 @@ def test_never_picks_an_unmeasured_k():
 
 
 def test_acceptance_is_tracked_per_request():
-    policy = AdaptiveDraftPolicy(prior_acceptance=0.5, smoothing=0.5)
+    policy = AdaptiveDraftPolicy(prior_acceptance=0.5)
     policy.record_acceptance("easy", accepted=4, drafted=4)
     policy.record_acceptance("hard", accepted=0, drafted=4)
-    assert policy.acceptance["easy"] > policy.acceptance["hard"]
+    assert policy.request_acceptance("easy") > policy.global_acceptance > policy.request_acceptance("hard")
 
 
 def test_explores_a_near_tie_now_and_then():
@@ -50,3 +50,12 @@ def test_does_not_explore_a_clearly_worse_k():
     # On a busy GPU k = 1 is far behind; exploring it would just waste steps.
     policy = policy_with_times({0: 0.010, 1: 0.060}, acceptance=0.5, batch_size=1)
     assert all(policy.choose(["a"]) == 0 for _ in range(30))
+
+
+def test_a_pessimistic_request_still_gets_rechecked():
+    # Typical requests accept 72%, so k = 2 is best for them. Request "a" had an unlucky streak and its own
+    # estimate says k = 0. Exploration judges by the typical rate, so "a" is still re-checked at k = 2.
+    policy = policy_with_times({0: 0.016, 2: 0.030}, acceptance=0.72, batch_size=1)
+    policy.counts["a"] = (0, 20)
+    choices = [policy.choose(["a"]) for _ in range(10)]
+    assert choices[:9] == [0] * 9 and choices[9] == 2
