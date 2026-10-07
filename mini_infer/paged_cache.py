@@ -74,6 +74,7 @@ class PagedBatch:
         self.block_tables = torch.tensor([t + [0] * (width - len(t)) for t in tables], dtype=torch.int32, device=device)
         self.lengths = [pool.lengths[s] for s in seq_ids]  # tokens stored before this forward
         self.lengths_t = torch.tensor(self.lengths, dtype=torch.int32, device=device)
+        self._write_slots: tuple[Tensor, Tensor] | None = None
 
     @property
     def length(self) -> int:
@@ -88,15 +89,22 @@ class PagedBatch:
     def write(self, layer: int, k: Tensor, v: Tensor) -> None:
         """Store k/v [B, kv_heads, T, D] of the new tokens, at positions lengths[i] .. lengths[i] + T - 1."""
         B, H, T, D = k.shape
-        positions = self.lengths_t[:, None] + torch.arange(T, device=k.device)  # [B, T]
-        blocks = self.block_tables.gather(1, (positions // self.pool.block_size).long()).flatten()
-        offsets = (positions % self.pool.block_size).flatten()
+        blocks, offsets = self._slots(T)
         # Advanced indices on dims 0 and 2 with a slice between: the indexed shape is [B*T, kv_heads, D].
         self.pool.k[layer][blocks, :, offsets] = k.transpose(1, 2).reshape(B * T, H, D)
         self.pool.v[layer][blocks, :, offsets] = v.transpose(1, 2).reshape(B * T, H, D)
+
+    def _slots(self, T: int) -> tuple[Tensor, Tensor]:
+        """Physical (block, offset) of each new token. Same for every layer, so computed once per forward."""
+        if self._write_slots is None:
+            positions = self.lengths_t[:, None] + torch.arange(T, device=self.lengths_t.device)  # [B, T]
+            blocks = self.block_tables.gather(1, (positions // self.pool.block_size).long()).flatten()
+            self._write_slots = blocks, (positions % self.pool.block_size).flatten()
+        return self._write_slots
 
     def advance(self, num_tokens: int) -> None:
         for s in self.seq_ids:
             self.pool.lengths[s] += num_tokens
         self.lengths = [n + num_tokens for n in self.lengths]
         self.lengths_t += num_tokens
+        self._write_slots = None
