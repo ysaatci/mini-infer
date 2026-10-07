@@ -1,14 +1,12 @@
 import json
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
 
-from bench.metrics import Metrics
-
-Row = tuple[str, str, Metrics]  # engine, workload, metrics
+Row = tuple[str, str, object]  # engine, workload, a metrics dataclass
 
 
 def environment() -> dict:
@@ -33,13 +31,10 @@ def save_json(path: Path, settings: dict, rows: list[Row]) -> None:
 
 
 def markdown_table(rows: list[Row]) -> str:
-    lines = [
-        "| Engine | Workload | TTFT ms | Decode tok/s | ITL p50 ms | ITL p99 ms | Total s | Peak GB |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
+    """One column per metrics field, so any metrics dataclass prints the same way."""
+    names = [f.name for f in fields(rows[0][2])]
+    lines = ["| engine | workload | " + " | ".join(names) + " |", "|---" * (len(names) + 2) + "|"]
     for engine, workload, m in rows:
-        lines.append(
-            f"| {engine} | {workload} | {m.ttft_ms:.1f} | {m.decode_tok_s:.1f} | {m.itl_p50_ms:.1f} "
-            f"| {m.itl_p99_ms:.1f} | {m.e2e_s:.2f} | {m.peak_mem_gb:.2f} |"
-        )
+        values = " | ".join(f"{getattr(m, n):.2f}" for n in names)
+        lines.append(f"| {engine} | {workload} | {values} |")
     return "\n".join(lines)
