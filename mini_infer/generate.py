@@ -21,13 +21,12 @@ def stream(
 ) -> Iterator[Tensor]:
     """prompt_ids [B, T] -> yields next token ids [B] one step at a time. Stops once every row hits eos_id."""
     B, T = prompt_ids.shape
-    weight = model.lm_head.weight
     cache = None
     if use_cache:
         # No scheduler here: each row reserves its full length up front.
         seq_ids = [str(i) for i in range(B)]
         num_blocks = B * math.ceil((T + max_new_tokens) / DEFAULT_BLOCK_SIZE)
-        pool = PagedKVPool(model.config, num_blocks, DEFAULT_BLOCK_SIZE, weight.device, weight.dtype)
+        pool = PagedKVPool(model.config, num_blocks, DEFAULT_BLOCK_SIZE, model.device, model.dtype)
         for seq_id in seq_ids:
             pool.reserve(seq_id, T + max_new_tokens)
         cache = pool.view(seq_ids)

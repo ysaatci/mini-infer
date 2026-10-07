@@ -65,9 +65,8 @@ class SpeculativeDecoder:
         self.target, self.draft = target, draft
         self.target_pool = target_pool
         self.k = config.num_draft_tokens
-        weight = draft.lm_head.weight
         # As many blocks as the target: the draft never holds more tokens per request than the target.
-        self.draft_pool = PagedKVPool(draft.config, target_pool.num_blocks, target_pool.block_size, weight.device, weight.dtype)
+        self.draft_pool = PagedKVPool(draft.config, target_pool.num_blocks, target_pool.block_size, draft.device, draft.dtype)
         self.draft_graphs = self.verify_graphs = None
         if use_cuda_graphs:
             self.draft_graphs = DecodeGraphRunner(draft, self.draft_pool, config.max_batch_size)

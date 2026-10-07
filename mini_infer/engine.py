@@ -41,9 +41,8 @@ class LLMEngine:
         use_cuda_graphs: bool = True,
         speculative: SpeculativeConfig | None = None,
     ):
-        weight = model.lm_head.weight
         self.model = model
-        self.pool = PagedKVPool(model.config, num_blocks, block_size, weight.device, weight.dtype)
+        self.pool = PagedKVPool(model.config, num_blocks, block_size, model.device, model.dtype)
         # Decode steps replay recorded graphs. Prefill stays eager: prompt lengths vary too much to record.
         self.graphs = DecodeGraphRunner(model, self.pool, max_batch_size) if use_cuda_graphs else None
         self.speculative = SpeculativeDecoder(model, self.pool, speculative, use_cuda_graphs) if speculative else None

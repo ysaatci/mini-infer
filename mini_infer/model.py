@@ -71,6 +71,15 @@ class Qwen2ForCausalLM(nn.Module):
         self.model = Qwen2Model(config, backend)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+    @property
+    def device(self) -> torch.device:
+        return self.model.embed_tokens.weight.device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """The activation dtype. Read from the embedding: linear layers may hold int8 weights."""
+        return self.model.embed_tokens.weight.dtype
+
     def tie_weights(self) -> None:
         """Share the embedding matrix with the output head, as the checkpoint expects."""
         if self.config.tie_word_embeddings:
