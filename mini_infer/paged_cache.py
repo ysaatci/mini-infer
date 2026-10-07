@@ -57,23 +57,53 @@ class PagedKVPool:
         self._free.extend(self.tables.pop(seq_id, []))
         self.lengths.pop(seq_id, None)
 
+    def advance(self, seq_ids: list[str], num_tokens: int) -> None:
+        for s in seq_ids:
+            self.lengths[s] += num_tokens
+
+    def block_table_rows(self, seq_ids: list[str], width: int | None = None) -> list[list[int]]:
+        """Block tables padded to a common width with block 0. Padding entries are never read:
+        lengths stop the kernel first."""
+        tables = [self.tables[s] for s in seq_ids]
+        width = width or max(len(t) for t in tables)
+        return [t + [0] * (width - len(t)) for t in tables]
+
     def view(self, seq_ids: list[str]) -> "PagedBatch":
-        return PagedBatch(self, seq_ids)
+        """Metadata for one forward over these sequences."""
+        device = self.k.device
+        lengths = [self.lengths[s] for s in seq_ids]
+        return PagedBatch(
+            self,
+            block_tables=torch.tensor(self.block_table_rows(seq_ids), dtype=torch.int32, device=device),
+            lengths_t=torch.tensor(lengths, dtype=torch.int32, device=device),
+            has_past=any(lengths),
+            seq_ids=seq_ids,
+            lengths=lengths,
+        )
 
 
 class PagedBatch:
-    """Per-forward metadata for the sequences in a batch: where their blocks are and how long they are."""
+    """Per-forward metadata for the sequences in a batch: where their blocks are and how long they are.
 
-    def __init__(self, pool: PagedKVPool, seq_ids: list[str]):
+    Usually built by PagedKVPool.view(). A CUDA graph builds it once over its own fixed buffers instead,
+    without seq_ids: those buffers are refilled before every replay and nothing on the Python side changes.
+    """
+
+    def __init__(
+        self,
+        pool: PagedKVPool,
+        block_tables: Tensor,  # [B, max_blocks] int32
+        lengths_t: Tensor,  # [B] int32, tokens stored before this forward
+        has_past: bool,
+        seq_ids: list[str] | None = None,
+        lengths: list[int] | None = None,
+    ):
         self.pool = pool
+        self.block_tables = block_tables
+        self.lengths_t = lengths_t
+        self.has_past = has_past
         self.seq_ids = seq_ids
-        device = pool.k.device
-        tables = [pool.tables[s] for s in seq_ids]
-        width = max(len(t) for t in tables)
-        # Padded with block 0. Padding entries are never read: lengths stop the kernel first.
-        self.block_tables = torch.tensor([t + [0] * (width - len(t)) for t in tables], dtype=torch.int32, device=device)
-        self.lengths = [pool.lengths[s] for s in seq_ids]  # tokens stored before this forward
-        self.lengths_t = torch.tensor(self.lengths, dtype=torch.int32, device=device)
+        self.lengths = lengths
         self._write_slots: tuple[Tensor, Tensor] | None = None
 
     @property
@@ -81,10 +111,6 @@ class PagedBatch:
         if len(set(self.lengths)) != 1:
             raise ValueError("rows have different lengths, pass positions explicitly")
         return self.lengths[0]
-
-    @property
-    def has_past(self) -> bool:
-        return any(self.lengths)
 
     def write(self, layer: int, k: Tensor, v: Tensor) -> None:
         """Store k/v [B, kv_heads, T, D] of the new tokens, at positions lengths[i] .. lengths[i] + T - 1."""
@@ -103,8 +129,8 @@ class PagedBatch:
         return self._write_slots
 
     def advance(self, num_tokens: int) -> None:
-        for s in self.seq_ids:
-            self.pool.lengths[s] += num_tokens
+        self.pool.advance(self.seq_ids, num_tokens)
         self.lengths = [n + num_tokens for n in self.lengths]
         self.lengths_t += num_tokens
+        self.has_past = True
         self._write_slots = None
