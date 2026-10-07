@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import torch
 from torch import Tensor
 
@@ -7,7 +9,7 @@ from mini_infer.sampling import SamplingParams, sample
 
 
 @torch.inference_mode()
-def generate(
+def stream(
     model: Qwen2ForCausalLM,
     prompt_ids: Tensor,
     max_new_tokens: int,
@@ -15,8 +17,8 @@ def generate(
     eos_id: int | None = None,
     use_cache: bool = True,
     generator: torch.Generator | None = None,
-) -> Tensor:
-    """prompt_ids [B, T] -> new token ids [B, <= max_new_tokens]. Stops early once every row hits eos_id."""
+) -> Iterator[Tensor]:
+    """prompt_ids [B, T] -> yields next token ids [B] one step at a time. Stops once every row hits eos_id."""
     B, T = prompt_ids.shape
     weight = model.lm_head.weight
     cache = StaticKVCache(model.config, B, T + max_new_tokens, weight.device, weight.dtype) if use_cache else None
@@ -31,8 +33,14 @@ def generate(
         if eos_id is not None:
             next_token = next_token.masked_fill(finished, eos_id)
             finished |= next_token == eos_id
-        tokens = torch.cat([tokens, next_token[:, None]], dim=1)
+        yield next_token
         next_input = next_token[:, None]
+        if not use_cache:
+            tokens = torch.cat([tokens, next_input], dim=1)
         if finished.all():
             break
-    return tokens[:, T:]
+
+
+def generate(model: Qwen2ForCausalLM, prompt_ids: Tensor, max_new_tokens: int, **kwargs) -> Tensor:
+    """Collects stream() into new token ids [B, <= max_new_tokens]."""
+    return torch.stack(list(stream(model, prompt_ids, max_new_tokens, **kwargs)), dim=1)
