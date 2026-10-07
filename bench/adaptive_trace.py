@@ -8,6 +8,7 @@ python -m bench.adaptive_trace --out bench/results/step10-trace.json
 """
 
 import argparse
+import gc
 import random
 import time
 from collections import Counter, defaultdict
@@ -93,7 +94,10 @@ def main() -> None:
         if name == "adaptive":
             trace = [(t - start, batch, k) for t, batch, k in list(policy.decisions)[decisions_before:]]
             print(f"  k chosen: {dict(sorted(Counter(k for *_, k in trace).items()))}")
+        # The engine and its scheduler reference each other (bound methods), so only the cycle collector
+        # frees it. Without collecting, earlier engines stay on the GPU and later runs spill to system RAM.
         del engine
+        gc.collect()
         torch.cuda.empty_cache()
 
     print("\n" + markdown_table(rows))
