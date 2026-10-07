@@ -94,7 +94,7 @@ class LLMEngine:
         if self.speculative is not None and isinstance(self.speculative.policy, AdaptiveDraftPolicy):
             self._calibrate_draft_policy(self.speculative.policy)
 
-    def _calibrate_draft_policy(self, policy: AdaptiveDraftPolicy, steps: int = 6) -> None:
+    def _calibrate_draft_policy(self, policy: AdaptiveDraftPolicy, steps: int = 10) -> None:
         """Time a few decode steps for every k at every batch bucket, so the policy starts with real costs
         instead of guesses. The engine keeps refining these while it serves."""
         buckets = [b for b in BATCH_BUCKETS if b <= self.speculative.max_batch_size]
@@ -103,12 +103,12 @@ class LLMEngine:
                 ids = [f"calibrate-{i}" for i in range(batch_size)]
                 if (64 + steps * (k + 1)) * batch_size > self.max_request_tokens:
                     continue  # too little cache memory to calibrate this size (tiny test engines)
-                policy.force_k = k
+                policy.calibrate(k)
                 for request_id in ids:
                     self.add_request(list(range(1, 65)), steps * (k + 1), request_id=request_id)
                 while self.has_unfinished():
                     self.step()
-        policy.force_k = None
+        policy.end_calibration()
 
     def has_unfinished(self) -> bool:
         return self.scheduler.has_unfinished()
