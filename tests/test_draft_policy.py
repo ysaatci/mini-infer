@@ -37,3 +37,10 @@ def test_acceptance_is_tracked_per_request():
     policy.record_acceptance("easy", accepted=4, drafted=4)
     policy.record_acceptance("hard", accepted=0, drafted=4)
     assert policy.acceptance["easy"] > policy.acceptance["hard"]
+
+
+def test_explores_a_neighboring_k_now_and_then():
+    # Plain decode is clearly best, but every 10th decision still tries k = 1 to keep measuring acceptance.
+    policy = policy_with_times({0: 0.010, 1: 0.060}, acceptance=0.5, batch_size=1)
+    choices = [policy.choose(["a"]) for _ in range(20)]
+    assert choices.count(1) == 2 and choices[9] == 1 and choices[19] == 1
