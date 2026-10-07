@@ -1,9 +1,10 @@
+import math
 from collections.abc import Iterator
 
 import torch
 from torch import Tensor
 
-from mini_infer.cache import SlotKVPool
+from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.sampling import SamplingParams, sample
 
@@ -23,8 +24,13 @@ def stream(
     weight = model.lm_head.weight
     cache = None
     if use_cache:
-        pool = SlotKVPool(model.config, B, T + max_new_tokens, weight.device, weight.dtype)
-        cache = pool.view([pool.allocate() for _ in range(B)])
+        # No scheduler here: each row reserves its full length up front.
+        seq_ids = [str(i) for i in range(B)]
+        num_blocks = B * math.ceil((T + max_new_tokens) / DEFAULT_BLOCK_SIZE)
+        pool = PagedKVPool(model.config, num_blocks, DEFAULT_BLOCK_SIZE, weight.device, weight.dtype)
+        for seq_id in seq_ids:
+            pool.reserve(seq_id, T + max_new_tokens)
+        cache = pool.view(seq_ids)
 
     tokens = prompt_ids
     next_input = prompt_ids  # prefill: the whole prompt in one forward

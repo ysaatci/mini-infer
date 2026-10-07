@@ -22,7 +22,8 @@ class MiniInferBatchEngine:
         from mini_infer.engine import LLMEngine
         from mini_infer.loader import load_model
 
-        self.engine = LLMEngine(load_model(model_name), max_batch_size, max_len)
+        # Same KV memory as one max_len slot per batch entry.
+        self.engine = LLMEngine(load_model(model_name), max_batch_size * max_len // 16, max_batch_size)
 
     def add(self, request: BatchRequest) -> None:
         # No eos: every engine generates exactly output_len tokens.

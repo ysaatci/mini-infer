@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 
 from mini_infer.attention import AttentionBackend
-from mini_infer.cache import KVCache
+from mini_infer.paged_cache import PagedBatch
 from mini_infer.config import ModelConfig
 from mini_infer.layers import MLP, RMSNorm, RotaryEmbedding, apply_rope
 
@@ -24,17 +24,14 @@ class Attention(nn.Module):
         self.o_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
         self.backend = backend
 
-    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, cache: KVCache | None) -> Tensor:
+    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, cache: PagedBatch | None) -> Tensor:
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        # Keys are rotated before caching, so past tokens never need re-rotating.
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
-        mask = None
-        if cache is not None:
-            # Keys are cached after RoPE, so past tokens never need re-rotating.
-            k, v, mask = cache.update(self.layer_idx, k, v)
-        out = self.backend(q, k, v, mask)
+        out = self.backend(q, k, v, cache, self.layer_idx)
         return self.o_proj(out.transpose(1, 2).reshape(B, T, -1))
 
 
@@ -46,7 +43,7 @@ class DecoderLayer(nn.Module):
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.mlp = MLP(config.hidden_size, config.intermediate_size)
 
-    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, cache: KVCache | None) -> Tensor:
+    def forward(self, x: Tensor, cos: Tensor, sin: Tensor, cache: PagedBatch | None) -> Tensor:
         x = x + self.self_attn(self.input_layernorm(x), cos, sin, cache)
         return x + self.mlp(self.post_attention_layernorm(x))
 
@@ -59,7 +56,7 @@ class Qwen2Model(nn.Module):
         self.norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.rope = RotaryEmbedding(config.head_dim, config.rope_theta)
 
-    def forward(self, input_ids: Tensor, positions: Tensor, cache: KVCache | None) -> Tensor:
+    def forward(self, input_ids: Tensor, positions: Tensor, cache: PagedBatch | None) -> Tensor:
         x = self.embed_tokens(input_ids)
         cos, sin = self.rope(positions, x.dtype)
         for layer in self.layers:
@@ -83,7 +80,7 @@ class Qwen2ForCausalLM(nn.Module):
         self,
         input_ids: Tensor,
         positions: Tensor | None = None,
-        cache: KVCache | None = None,
+        cache: PagedBatch | None = None,
         last_token_only: bool = False,
     ) -> Tensor:
         """input_ids [B, T] -> logits [B, T, vocab]. With a cache, input_ids are only the new tokens.

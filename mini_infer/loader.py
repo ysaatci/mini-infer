@@ -4,7 +4,7 @@ import torch
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 
-from mini_infer.attention import AttentionBackend, SdpaBackend
+from mini_infer.attention import AttentionBackend, TorchPagedBackend
 from mini_infer.config import ModelConfig
 from mini_infer.model import Qwen2ForCausalLM
 
@@ -32,7 +32,7 @@ def load_model(
 
     # Meta tensors have no storage, so we skip random init and never hold two copies of the weights.
     with torch.device("meta"):
-        model = Qwen2ForCausalLM(config, backend or SdpaBackend())
+        model = Qwen2ForCausalLM(config, backend or TorchPagedBackend())
 
     state = {}
     for file in sorted(model_dir.glob("*.safetensors")):

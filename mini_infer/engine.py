@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from mini_infer.cache import SlotKVPool
 from mini_infer.model import Qwen2ForCausalLM
+from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.request import Request
 from mini_infer.sampling import SamplingParams, sample_batch
 from mini_infer.scheduler import Scheduler
@@ -25,11 +25,13 @@ class LLMEngine:
     runs one decode step for every running request.
     """
 
-    def __init__(self, model: Qwen2ForCausalLM, max_batch_size: int = 32, max_len: int = 2048):
+    def __init__(
+        self, model: Qwen2ForCausalLM, num_blocks: int, max_batch_size: int = 64, block_size: int = DEFAULT_BLOCK_SIZE
+    ):
         weight = model.lm_head.weight
         self.model = model
-        self.pool = SlotKVPool(model.config, max_batch_size, max_len, weight.device, weight.dtype)
-        self.scheduler = Scheduler(self.pool)
+        self.pool = PagedKVPool(model.config, num_blocks, block_size, weight.device, weight.dtype)
+        self.scheduler = Scheduler(self.pool, max_batch_size)
         self._ids = itertools.count()
 
     def add_request(
@@ -40,8 +42,10 @@ class LLMEngine:
         eos_id: int | None = None,
         request_id: str | None = None,
     ) -> str:
-        if len(prompt_ids) + max_new_tokens > self.pool.max_len:
-            raise ValueError(f"prompt + max_new_tokens exceeds max_len {self.pool.max_len}")
+        capacity = self.pool.num_blocks * self.pool.block_size
+        if len(prompt_ids) + max_new_tokens > capacity:
+            # Could never run, even alone with the whole cache.
+            raise ValueError(f"prompt + max_new_tokens exceeds KV cache capacity of {capacity} tokens")
         request_id = request_id or str(next(self._ids))
         self.scheduler.add(Request(request_id, list(prompt_ids), max_new_tokens, params, eos_id))
         return request_id
@@ -65,15 +69,17 @@ class LLMEngine:
 
     def _prefill(self, request: Request) -> Tensor:
         # One request per forward: prompts differ in length, and padding them together wastes compute.
-        input_ids = torch.tensor([request.prompt_ids], device=self.pool.k.device)
-        return self.model(input_ids, cache=self.pool.view([request.slot]), last_token_only=True)[:, -1]
+        # A preempted request re-runs its prompt plus what it had generated, then continues.
+        input_ids = torch.tensor([request.all_ids], device=self.pool.k.device)
+        return self.model(input_ids, cache=self.pool.view([request.id]), last_token_only=True)[:, -1]
 
     def _decode(self, requests: list[Request]) -> Tensor:
         device = self.pool.k.device
         input_ids = torch.tensor([[r.output_ids[-1]] for r in requests], device=device)
         # A request's next position is the number of tokens it already has in the cache.
-        positions = torch.tensor([[self.pool.lengths[r.slot]] for r in requests], device=device)
-        return self.model(input_ids, positions, self.pool.view([r.slot for r in requests]), last_token_only=True)[:, -1]
+        positions = torch.tensor([[self.pool.lengths[r.id]] for r in requests], device=device)
+        cache = self.pool.view([r.id for r in requests])
+        return self.model(input_ids, positions, cache, last_token_only=True)[:, -1]
 
     def _append(self, request: Request, token: int) -> TokenOutput:
         request.output_ids.append(token)

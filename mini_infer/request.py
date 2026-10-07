@@ -19,7 +19,11 @@ class Request:
     eos_id: int | None = None
     output_ids: list[int] = field(default_factory=list)
     status: RequestStatus = RequestStatus.WAITING
-    slot: int | None = None  # KV cache slot while running
+
+    @property
+    def all_ids(self) -> list[int]:
+        """Prompt plus output so far: what a preempted request must prefill again to resume."""
+        return self.prompt_ids + self.output_ids
 
     @property
     def is_finished(self) -> bool:

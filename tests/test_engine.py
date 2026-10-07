@@ -19,18 +19,31 @@ OUTPUT_LENS = [20, 35, 12, 40, 25]
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
 
-def test_batched_engine_matches_single_request_generation():
-    model = load_model(NAME, dtype=torch.float32)
-    tokenizer = AutoTokenizer.from_pretrained(resolve_model_dir(NAME))
-    prompts = [tokenizer(p).input_ids for p in PROMPTS]
+@pytest.fixture(scope="module")
+def model():
+    return load_model(NAME, dtype=torch.float32)
 
-    expected = {
+
+@pytest.fixture(scope="module")
+def prompts():
+    tokenizer = AutoTokenizer.from_pretrained(resolve_model_dir(NAME))
+    return [tokenizer(p).input_ids for p in PROMPTS]
+
+
+@pytest.fixture(scope="module")
+def expected(model, prompts):
+    return {
         str(i): generate(model, torch.tensor([ids], device="cuda"), n)[0].tolist()
         for i, (ids, n) in enumerate(zip(prompts, OUTPUT_LENS))
     }
 
-    # Fewer slots than requests: forces requests to wait, join mid-run, and reuse freed slots.
-    engine = LLMEngine(model, max_batch_size=3, max_len=128)
+
+# 64 blocks fit everything. With 5 blocks (80 tokens) the longest request still fits alone (55 tokens),
+# but three running requests outgrow memory and get preempted.
+@pytest.mark.parametrize("num_blocks, expect_preemption", [(64, False), (5, True)])
+def test_batched_engine_matches_single_request_generation(model, prompts, expected, num_blocks, expect_preemption):
+    # Batch cap below the request count: forces requests to wait, join mid-run, and reuse freed blocks.
+    engine = LLMEngine(model, num_blocks=num_blocks, max_batch_size=3)
     for i, (ids, n) in enumerate(zip(prompts, OUTPUT_LENS)):
         engine.add_request(ids, n, request_id=str(i))
     actual: dict[str, list[int]] = {str(i): [] for i in range(len(PROMPTS))}
@@ -39,3 +52,4 @@ def test_batched_engine_matches_single_request_generation():
             actual[out.request_id].append(out.token)
 
     assert actual == expected
+    assert (engine.scheduler.num_preemptions > 0) == expect_preemption
