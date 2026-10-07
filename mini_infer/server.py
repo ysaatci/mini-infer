@@ -34,6 +34,7 @@ def create_app(engine: AsyncEngine, tokenizer, model_name: str, stop_ids: frozen
         engine.shutdown()
 
     app = FastAPI(lifespan=lifespan)
+    app.state.engine = engine
     token_limit = engine.engine.max_request_tokens
 
     def start(request: ChatCompletionRequest | CompletionRequest, prompt_ids: list[int]) -> Tokens:
