@@ -1,0 +1,116 @@
+{
+  "environment": {
+    "time": "2026-10-07T17:31:35+00:00",
+    "commit": "e33be60",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "engines": [
+      "mini-infer",
+      "mini-infer-nocache",
+      "hf"
+    ],
+    "prompt_lens": [
+      128,
+      512,
+      2048
+    ],
+    "output_len": 256,
+    "repeats": 3,
+    "out": "bench/results/step3-baseline.json"
+  },
+  "results": [
+    {
+      "engine": "mini-infer",
+      "workload": "in128-out256",
+      "ttft_ms": 35.102358000003164,
+      "decode_tok_s": 43.15652178848271,
+      "itl_p50_ms": 21.598471000004338,
+      "itl_p99_ms": 43.636801999994645,
+      "e2e_s": 5.94240680499999,
+      "peak_mem_gb": 3.14916608
+    },
+    {
+      "engine": "mini-infer",
+      "workload": "in512-out256",
+      "ttft_ms": 108.9190579999979,
+      "decode_tok_s": 41.30704912363024,
+      "itl_p50_ms": 22.062438999995493,
+      "itl_p99_ms": 38.335146000008535,
+      "e2e_s": 6.284375826999991,
+      "peak_mem_gb": 3.27736064
+    },
+    {
+      "engine": "mini-infer",
+      "workload": "in2048-out256",
+      "ttft_ms": 360.65330100001347,
+      "decode_tok_s": 44.52824321441552,
+      "itl_p50_ms": 21.043775000009646,
+      "itl_p99_ms": 39.011968000011166,
+      "e2e_s": 6.087355762000016,
+      "peak_mem_gb": 3.793677824
+    },
+    {
+      "engine": "mini-infer-nocache",
+      "workload": "in128-out256",
+      "ttft_ms": 33.53013700001384,
+      "decode_tok_s": 14.507246842648822,
+      "itl_p50_ms": 58.462287999986984,
+      "itl_p99_ms": 221.76042099999904,
+      "e2e_s": 17.62069507000001,
+      "peak_mem_gb": 3.332219904
+    },
+    {
+      "engine": "mini-infer-nocache",
+      "workload": "in512-out256",
+      "ttft_ms": 85.69219699998598,
+      "decode_tok_s": 8.395485140833856,
+      "itl_p50_ms": 123.12315600001966,
+      "itl_p99_ms": 614.5506629999886,
+      "e2e_s": 30.459160284000006,
+      "peak_mem_gb": 3.566141952
+    },
+    {
+      "engine": "mini-infer-nocache",
+      "workload": "in2048-out256",
+      "ttft_ms": 324.33420399991064,
+      "decode_tok_s": 0.6208946890357315,
+      "itl_p50_ms": 376.3179929999865,
+      "itl_p99_ms": 8399.11687700004,
+      "e2e_s": 411.0209717969999,
+      "peak_mem_gb": 4.505940992
+    },
+    {
+      "engine": "hf",
+      "workload": "in128-out256",
+      "ttft_ms": 38.57966200007468,
+      "decode_tok_s": 39.550015047749255,
+      "itl_p50_ms": 23.392035999904692,
+      "itl_p99_ms": 41.78219300001729,
+      "e2e_s": 6.486111975000085,
+      "peak_mem_gb": 3.114239488
+    },
+    {
+      "engine": "hf",
+      "workload": "in512-out256",
+      "ttft_ms": 101.82398099982493,
+      "decode_tok_s": 39.8822177887025,
+      "itl_p50_ms": 23.66638399985277,
+      "itl_p99_ms": 39.796158000172,
+      "e2e_s": 6.494993441000133,
+      "peak_mem_gb": 3.147737088
+    },
+    {
+      "engine": "hf",
+      "workload": "in2048-out256",
+      "ttft_ms": 339.11834700006693,
+      "decode_tok_s": 39.39831909274758,
+      "itl_p50_ms": 23.54024400005983,
+      "itl_p99_ms": 40.56339399994613,
+      "e2e_s": 6.811145590000024,
+      "peak_mem_gb": 3.296147456
+    }
+  ]
+}
