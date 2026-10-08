@@ -1,5 +1,6 @@
 import torch
 
+from mini_infer.sampling import SamplingParams, seeded_sample
 from mini_infer.speculative import accept
 
 VOCAB, K, TRIALS = 8, 3, 200_000
@@ -34,3 +35,12 @@ def test_greedy_accepts_while_equal_then_takes_the_target_token():
     target = one_hot([1, 2, 5, 6])  # agrees on two drafts, then picks 5
     num_accepted, next_token = accept(draft, one_hot([1, 2, 3]), target)
     assert num_accepted.item() == 2 and next_token.item() == 5
+
+
+def test_seeded_sampling_follows_the_distribution_and_repeats():
+    torch.manual_seed(0)
+    logits = torch.randn(1, VOCAB)
+    params = SamplingParams(temperature=1.0, seed=7)
+    draws = torch.stack([seeded_sample(logits, params, position) for position in range(20_000)])
+    assert total_variation(draws, torch.softmax(logits[0], -1)) < 0.02
+    assert seeded_sample(logits, params, 5) == seeded_sample(logits, params, 5)
