@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 
 from mini_infer.cuda_graphs import BATCH_BUCKETS, DecodeGraphRunner
+from mini_infer.deterministic import make_batch_invariant
 from mini_infer.draft_policy import AdaptiveDraftPolicy
 from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
@@ -42,7 +43,14 @@ class LLMEngine:
         block_size: int = DEFAULT_BLOCK_SIZE,
         use_cuda_graphs: bool = True,
         speculative: SpeculativeConfig | None = None,
+        deterministic: bool = False,
     ):
+        """deterministic: a request's output doesn't depend on what else is running, for greedy requests and
+        sampled ones with a seed. Switches the model (in place) to batch-invariant kernels, reserves each
+        request's memory at admission so none is preempted, and doesn't speculate for sampled requests."""
+        self.deterministic = deterministic
+        if deterministic:
+            make_batch_invariant(model)  # before any CUDA graph records the kernels
         self.model = model
         self.pool = PagedKVPool(model.config, num_blocks, block_size, model.device, model.dtype)
         # Decode steps replay recorded graphs. Prefill stays eager: prompt lengths vary too much to record.
@@ -55,6 +63,8 @@ class LLMEngine:
             max_batch_size,
             decode_lookahead=self._decode_lookahead,
             on_release=self.speculative.release if self.speculative else lambda request_id: None,
+            # Spare slots past the last token: a speculative step can write up to max_draft_tokens + 1.
+            reserve_full=(self.speculative.max_draft_tokens + 1 if self.speculative else 1) if deterministic else None,
         )
         self._ids = itertools.count()
         self.last_batch: Batch | None = None  # what the latest step ran, for monitoring and benchmarks
@@ -64,6 +74,9 @@ class LLMEngine:
         (0 = plain decode). Batches above the speculation limit always decode plainly."""
         spec = self.speculative
         if spec is None or len(requests) > spec.max_batch_size:
+            return 1
+        if self.deterministic and any(r.params.temperature > 0 for r in requests):
+            # Rejection sampling's random draws depend on k, and k on load: sampled output would too.
             return 1
         return min(spec.policy.choose([r.id for r in requests]), spec.max_draft_tokens) + 1
 
@@ -134,7 +147,8 @@ class LLMEngine:
         if new_tokens is None:
             start = time.perf_counter()
             logits = torch.cat([self._prefill(r) for r in requests]) if batch.prefill else self._decode(requests)
-            new_tokens = [[t] for t in sample_batch(logits, [r.params for r in requests]).tolist()]  # one GPU sync
+            positions = [len(r.output_ids) for r in requests]  # which token each request samples, for seeds
+            new_tokens = [[t] for t in sample_batch(logits, [r.params for r in requests], positions=positions).tolist()]
             if batch.decode and self.speculative is not None:
                 # The k = 0 baseline the draft policy weighs speculative steps against.
                 self.speculative.policy.record_step(0, len(requests), time.perf_counter() - start)
