@@ -8,6 +8,9 @@ from torch import Tensor
 class SamplingParams:
     temperature: float = 0.0  # 0 means greedy
     top_p: float = 1.0
+    # Same seed and same prompt: same sampled tokens, whatever else is in the batch (with batch-invariant
+    # kernels). None: random as usual.
+    seed: int | None = None
 
     def __post_init__(self):
         if self.temperature < 0:
@@ -21,11 +24,34 @@ def sample(logits: Tensor, params: SamplingParams, generator: torch.Generator | 
     return sample_batch(logits, [params] * logits.shape[0], generator)
 
 
-def sample_batch(logits: Tensor, params: list[SamplingParams], generator: torch.Generator | None = None) -> Tensor:
-    """logits [B, vocab] -> next token ids [B], each row with its own params (requests in a batch differ)."""
+def sample_batch(
+    logits: Tensor,
+    params: list[SamplingParams],
+    generator: torch.Generator | None = None,
+    positions: list[int] | None = None,
+) -> Tensor:
+    """logits [B, vocab] -> next token ids [B], each row with its own params (requests in a batch differ).
+    positions: index of the token being sampled per row, which seeded rows need."""
     if all(p.temperature == 0 for p in params):
         return logits.argmax(-1)  # skip building distributions over the whole vocabulary
-    return torch.multinomial(probabilities(logits, params), 1, generator=generator).squeeze(-1)
+    tokens = torch.multinomial(probabilities(logits, params), 1, generator=generator).squeeze(-1)
+    for i, p in enumerate(params):
+        if p.seed is not None and p.temperature > 0:
+            tokens[i] = seeded_sample(logits[i : i + 1], p, positions[i])
+    return tokens
+
+
+def seeded_sample(logits: Tensor, params: SamplingParams, position: int) -> Tensor:
+    """One row's token from randomness that depends only on (seed, position), never on the batch.
+
+    Gumbel-max: argmax(log p + g) with g = -log(-log u) draws from p exactly, like multinomial. The
+    distribution is built from this row alone, so softmax, top-p sort and cumsum always see the same
+    shape and sum in the same order.
+    """
+    probs = probabilities(logits, [params])[0]
+    generator = torch.Generator(device=logits.device).manual_seed((params.seed * 1_000_003 + position) % 2**63)
+    u = torch.rand(probs.shape, device=logits.device, generator=generator).clamp_(min=1e-20)
+    return (probs.log() - (-u.log()).log()).argmax()
 
 
 def probabilities(logits: Tensor, params: list[SamplingParams]) -> Tensor:
