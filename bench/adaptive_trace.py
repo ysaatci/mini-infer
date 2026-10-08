@@ -27,6 +27,7 @@ from mini_infer.speculative import SpeculativeConfig
 
 PHASES = [(40.0, 0.3), (30.0, 4.0), (40.0, 0.3)]  # (seconds, requests per second)
 
+
 def arrivals(seed: int = 0) -> list[float]:
     rng, times, clock = random.Random(seed), [], 0.0
     phase_start = 0.0
@@ -39,6 +40,7 @@ def arrivals(seed: int = 0) -> list[float]:
             times.append(clock)
         phase_start += duration
     return times
+
 
 def drive(engine: LLMEngine, prompts: list[list[int]], arrival_s: list[float], stop_ids):
     """Returns token arrival times per request, and per decode step (seconds, batch size, k)."""
