@@ -12,12 +12,12 @@ RTX 5050 Laptop GPU (8 GB), Qwen2.5-1.5B-Instruct, bf16 unless noted. Raw number
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/charts/single-request-dark.svg">
-  <img alt="Single-request decode speed: Hugging Face 40 tok/s; no KV cache 15; KV cache 43; paged cache and Triton kernel 36; CUDA graphs 65; int8 weights 119." src="docs/charts/single-request-light.svg">
+  <img alt="Single-request decode speed: Hugging Face 40 tok/s; no KV cache 15; KV cache 43; paged cache and Triton kernel 36; CUDA graphs 65; Triton decode matmul 86; int8 weights 119." src="docs/charts/single-request-light.svg">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/charts/batching-dark.svg">
-  <img alt="Throughput with 200 requests at once: continuous batching 438 tok/s, paged cache and kernel 874, CUDA graphs 985, int8 1132, vLLM 0.31 1238. Median request time at 1, 2 and 3 requests/s: mini-infer bf16 4.4, 6.3, 9.4 s; int8 3.1, 4.2, 5.8 s; vLLM bf16 4.2, 5.5, 6.9 s." src="docs/charts/batching-light.svg">
+  <img alt="Throughput with 200 requests at once: continuous batching 438 tok/s, paged cache and kernel 874, CUDA graphs 985, Triton decode matmul 1057, int8 1132, vLLM 0.31 1238. Median request time at 1, 2 and 3 requests/s: mini-infer bf16 4.5, 5.3, 7.8 s; int8 3.1, 4.2, 5.8 s; vLLM bf16 4.2, 5.5, 6.9 s." src="docs/charts/batching-light.svg">
 </picture>
 
 Speculative decoding helps a quiet server and hurts a busy one, so the number of drafted tokens is chosen each step from measured acceptance and step times. A fixed setting is wrong somewhere; the adaptive policy stays within about 10% of the best policy at every load.
@@ -40,6 +40,15 @@ int8 weights cost almost nothing in quality:
 | Greedy tokens matching bf16 | | 98% |
 | Weight memory | 3.09 GB | 2.02 GB |
 
+With `--deterministic`, a request's output doesn't depend on what else is running. Normally it can: kernels sum in a different order depending on the batch, and floating-point addition isn't associative. The same prompt, alone or among other requests, greedy or sampled with a seed:
+
+| | Identical output in 4 batch settings | Decode, 1 request | Throughput, 200 at once |
+|---|---|---|---|
+| Default | 1 of 4 (diverges after 22 to 39 tokens) | 86 tok/s | 1047 tok/s |
+| Deterministic | 4 of 4 | 79 tok/s | 936 tok/s |
+
+Under online load (1 to 3 requests/s) the two modes measure the same.
+
 ## What's implemented
 
 | Technique | What it fixes |
@@ -52,7 +61,9 @@ int8 weights cost almost nothing in quality:
 | OpenAI-compatible server | Works with existing clients, streams tokens, frees memory on disconnect |
 | Speculative decoding | Every token costs a full read of the weights; a small model drafts and the big one checks several per read |
 | Adaptive speculation | The best number of drafts depends on load; a cost model picks it every step |
+| Triton decode matmul | cuBLAS is slow at decode sizes on this GPU (1 row: 36.5 vs 15.6 µs) |
 | int8 weights | Decode is limited by reading the weights; half the bytes per weight, with a Triton kernel that converts in registers |
+| Deterministic mode | Output varied with batch composition; batch-invariant kernels and seeded sampling make it reproducible |
 
 ## Run
 
@@ -64,6 +75,7 @@ python scripts/download_models.py  # Qwen2.5 0.5B and 1.5B
 python -m mini_infer.server        # OpenAI-compatible API on localhost:8000
                                    # --draft-model Qwen/Qwen2.5-0.5B-Instruct for speculative decoding
                                    # --int8 for int8 weights
+                                   # --deterministic for batch-independent output
 pytest
 ```
 
