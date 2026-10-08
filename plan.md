@@ -74,10 +74,12 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 - Why: step 7 showed the best k depends on load: +39% with one request, -19% at eight in flight with k = 2. A fixed setting is wrong somewhere.
 - What went wrong on the way, each found by measuring: exploration at high load cost 17%; exploring only the neighbor k left the policy stuck at k = 0; calibration on synthetic prompts set acceptance to 1.0 and warmup dragged it to 0.38; dividing accepted by all drafted tokens (instead of checked ones) biased acceptance down by k; benchmarking policies on separate engines measured GPU clock drift as a 23% "difference".
 
-### 11. Batch-invariant deterministic mode
-- Kernels that sum in the same order no matter how many requests share the batch (attention, int8 matmul, norms), so a prompt's output doesn't depend on what else is running.
-- Test: the same prompt alone and inside batches of different sizes gives bit-identical bf16 output. Measure the speed cost.
-- Why: today bf16 output can change with batch composition, because reductions run in a different order. Reproducible outputs matter for evaluation, debugging, and RL training against an inference server.
+### 11. Batch-invariant deterministic mode (done)
+- Kernels that sum in the same order no matter how many requests share the batch, so a prompt's output doesn't depend on what else is running. Measured per component first: cuBLAS bf16 and the attention kernel's batch-sized split count varied, RMSNorm didn't.
+- Fixed-tile Triton matmul for decode-sized forwards (bf16 and int8); attention split every 512 tokens with a left-to-right merge of each row's own splits; seeded sampling (Gumbel-max, randomness keyed by seed and position); memory reserved at admission so no request is preempted; no speculation for sampled requests (its draws depend on k, and k on load). Prefill unchanged: each prompt is prefilled alone.
+- Test: the same prompt alone, with 7 others, and joining 20 running ones gives identical tokens, greedy, seeded and with greedy speculation. Without the mode it diverged after 22 to 39 tokens in 3 of 4 settings.
+- Finding: the fixed-tile Triton matmul was faster than cuBLAS at decode sizes, so the tuned Triton matmul became the default for bf16 decode (single request 60 → 86 tok/s, offline ~990 → ~1050). Against that default, deterministic mode costs ~10% when saturated (79 vs 86 tok/s, 936 vs 1047 offline) and nothing measurable under online load.
+- Why: bf16 output changed with batch composition, because reductions ran in a different order. Reproducible outputs matter for evaluation, debugging, and RL training against an inference server.
 
 ## Layout
 
