@@ -11,7 +11,7 @@ from mini_infer.model import Qwen2ForCausalLM
 from mini_infer.paged_cache import DEFAULT_BLOCK_SIZE, PagedKVPool
 from mini_infer.request import Request
 from mini_infer.sampling import SamplingParams, sample_batch
-from mini_infer.scheduler import Scheduler
+from mini_infer.scheduler import Batch, Scheduler
 from mini_infer.speculative import SpeculativeConfig, SpeculativeDecoder
 
 
@@ -57,6 +57,7 @@ class LLMEngine:
             on_release=self.speculative.release if self.speculative else lambda request_id: None,
         )
         self._ids = itertools.count()
+        self.last_batch: Batch | None = None  # what the latest step ran, for monitoring and benchmarks
 
     def _decode_lookahead(self, requests: list[Request]) -> int:
         """Cache slots the next decode step needs per request: k + 1, where the draft policy picks k
@@ -123,7 +124,7 @@ class LLMEngine:
 
     @torch.inference_mode()
     def step(self) -> list[TokenOutput]:
-        batch = self.scheduler.schedule()
+        batch = self.last_batch = self.scheduler.schedule()
         requests = batch.prefill or batch.decode
         if not requests:
             return []
