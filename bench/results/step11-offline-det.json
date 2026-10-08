@@ -1,0 +1,39 @@
+{
+  "environment": {
+    "time": "2026-10-08T08:40:35+00:00",
+    "commit": "0b28a11",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "engine": "mini-infer",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "num_requests": 200,
+    "rate": null,
+    "max_batch_size": 64,
+    "kv_cache_gb": 1.41,
+    "int8": false,
+    "deterministic": true,
+    "max_len": 1536,
+    "seed": 0,
+    "out": "bench/results/step11-offline-det.json"
+  },
+  "results": [
+    {
+      "engine": "mini-infer-det",
+      "workload": "offline-n200",
+      "output_tok_s": 1066.9088839472122,
+      "requests_s": 4.016068975183363,
+      "ttft_p50_ms": 18811.047710000024,
+      "ttft_p99_ms": 41669.752743000005,
+      "itl_p50_ms": 25.683555000000524,
+      "itl_p99_ms": 230.4043400000637,
+      "e2e_p50_s": 30.48637087999998,
+      "e2e_p99_s": 49.275110504000054,
+      "peak_mem_gb": 4.650143744
+    }
+  ],
+  "stats": {
+    "preemptions": 0
+  }
+}

@@ -82,7 +82,7 @@ Rules: small modular commits (one logical change each), SOLID-style modules, ben
 ## Layout
 
 ```
-mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py  quant.py
+mini_infer/   config.py  layers.py  model.py  loader.py  sampling.py  generate.py  quant.py  matmul.py  deterministic.py
               paged_cache.py  attention.py  kernels.py  cuda_graphs.py  request.py  scheduler.py  engine.py
               async_engine.py  detokenizer.py  protocol.py  server.py  speculative.py  draft_policy.py
 bench/        single request: workload.py  engines.py  run.py
@@ -91,7 +91,7 @@ bench/        single request: workload.py  engines.py  run.py
               quality: quality.py      charts: charts.py
               shared: metrics.py  report.py  results/*.json
 tests/        test_logits.py  test_cache.py  test_engine.py  test_paged_attention.py  test_detokenizer.py  test_server.py
-              test_speculative_sampling.py  test_quant.py  test_draft_policy.py
+              test_speculative_sampling.py  test_quant.py  test_draft_policy.py  test_deterministic.py
 ```
 
 ## Improvements found along the way
