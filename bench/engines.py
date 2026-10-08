@@ -25,10 +25,10 @@ class Engine(Protocol):
 class MiniInferEngine:
     """The serving engine (paged cache, Triton kernel, optional CUDA graphs) with one request at a time."""
 
-    def __init__(self, model_name: str, use_cuda_graphs: bool, int8: bool = False):
+    def __init__(self, model_name: str, use_cuda_graphs: bool, int8: bool = False, deterministic: bool = False):
         model = quantize_model(load_model(model_name)) if int8 else load_model(model_name)
         num_blocks = PagedKVPool.blocks_for_memory(model.config, KV_CACHE_BYTES, DEFAULT_BLOCK_SIZE, torch.bfloat16)
-        self.engine = LLMEngine(model, num_blocks, max_batch_size=1, use_cuda_graphs=use_cuda_graphs)
+        self.engine = LLMEngine(model, num_blocks, max_batch_size=1, use_cuda_graphs=use_cuda_graphs, deterministic=deterministic)
 
     def run(self, prompt_ids: Tensor, max_new_tokens: int) -> list[float]:
         start = time.perf_counter()
@@ -99,6 +99,7 @@ ENGINES: dict[str, Callable[[str], Engine]] = {
     "mini-infer": lambda name: MiniInferEngine(name, use_cuda_graphs=True),
     "mini-infer-eager": lambda name: MiniInferEngine(name, use_cuda_graphs=False),
     "mini-infer-int8": lambda name: MiniInferEngine(name, use_cuda_graphs=True, int8=True),
+    "mini-infer-det": lambda name: MiniInferEngine(name, use_cuda_graphs=True, deterministic=True),
     "mini-infer-nocache": NoCacheEngine,
     "hf": HuggingFaceEngine,
 }

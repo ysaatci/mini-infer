@@ -29,6 +29,7 @@ class EngineSettings:
     kv_cache_bytes: int  # the same KV memory budget for every engine
     max_len: int  # longest prompt + output
     int8: bool = False  # int8 weights (mini-infer only)
+    deterministic: bool = False  # batch-invariant mode (mini-infer only)
 
 
 class MiniInferBatchEngine:
@@ -45,7 +46,7 @@ class MiniInferBatchEngine:
 
             model = quantize_model(model)
         num_blocks = PagedKVPool.blocks_for_memory(model.config, settings.kv_cache_bytes, DEFAULT_BLOCK_SIZE, torch.bfloat16)
-        self.engine = LLMEngine(model, num_blocks, settings.max_batch_size)
+        self.engine = LLMEngine(model, num_blocks, settings.max_batch_size, deterministic=settings.deterministic)
 
     def add(self, request: BatchRequest) -> None:
         # No eos: every engine generates exactly output_len tokens.

@@ -48,6 +48,7 @@ def main() -> None:
     # Step 4's KV memory: 32 slots x 1536 tokens x 28 KB per token (Qwen2.5-1.5B, bf16).
     parser.add_argument("--kv-cache-gb", type=float, default=1.41)
     parser.add_argument("--int8", action="store_true", help="int8 weights (mini-infer only)")
+    parser.add_argument("--deterministic", action="store_true", help="batch-invariant mode (mini-infer only)")
     parser.add_argument("--max-len", type=int, default=1536, help="longest prompt + output")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, required=True)
@@ -55,7 +56,9 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     requests = make_requests(tokenizer, args.num_requests, args.rate, args.seed)
-    settings = EngineSettings(args.model, args.max_batch_size, int(args.kv_cache_gb * 1e9), args.max_len, args.int8)
+    settings = EngineSettings(
+        args.model, args.max_batch_size, int(args.kv_cache_gb * 1e9), args.max_len, args.int8, args.deterministic
+    )
     engine = BATCH_ENGINES[args.engine](settings)
 
     warmup = make_requests(tokenizer, 4, None, seed=999, output_range=(8, 8))
@@ -66,7 +69,8 @@ def main() -> None:
     metrics = summarize_batch(token_times, {r.id: r.arrival_s for r in requests}, makespan, torch.cuda.max_memory_allocated())
 
     workload = "offline" if args.rate is None else f"rate{args.rate:g}"
-    rows = [(args.engine + ("-int8" if args.int8 else ""), f"{workload}-n{args.num_requests}", metrics)]
+    label = args.engine + ("-int8" if args.int8 else "") + ("-det" if args.deterministic else "")
+    rows = [(label, f"{workload}-n{args.num_requests}", metrics)]
     print(markdown_table(rows))
     print(engine.stats())
     save_json(args.out, vars(args) | {"out": str(args.out)}, rows, engine.stats())
