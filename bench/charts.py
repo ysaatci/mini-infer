@@ -14,12 +14,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 RESULTS = Path(__file__).parent / "results"
 OUT = Path(__file__).parent.parent / "docs" / "charts"
 
-# Validated palette (two categorical slots, both modes) plus gray for reference systems (HF, vLLM).
+# Validated palette (three categorical slots, both modes) plus gray for reference systems (HF, vLLM).
+# The light third slot is below 3:1 contrast, so every line using it also gets a direct label.
 THEMES = {
     "light": {"surface": "#fcfcfb", "ink": "#0b0b0b", "muted": "#52514e", "grid": "#e1e0d9", "axis": "#c3c2b7",
-              "series": ["#2a78d6", "#eb6834"], "reference": "#898781"},
+              "series": ["#2a78d6", "#eb6834", "#1baf7a"], "reference": "#898781"},
     "dark": {"surface": "#1a1a19", "ink": "#ffffff", "muted": "#c3c2b7", "grid": "#2c2c2a", "axis": "#383835",
-             "series": ["#3987e5", "#d95926"], "reference": "#898781"},
+             "series": ["#3987e5", "#d95926", "#199e70"], "reference": "#898781"},
 }
 
 
@@ -118,31 +119,58 @@ def batching(theme: dict):
     return fig
 
 
-def speculative(theme: dict):
-    """Change in output speed from speculative decoding (k = 2) by how many requests are in flight."""
-    concurrency = [1, 4, 8]
-    fig, ax = figure(theme, 7.2, 3.2)
-    width = 0.34
-    for i, (name, temperature) in enumerate((("greedy", "0"), ("temperature 0.7", "0.7"))):
-        gains = []
-        for c in concurrency:
-            base = metric("step7-spec.json", "no-spec", f"c{c}-t{temperature}", "output_tok_s")
-            spec = metric("step7-spec.json", "k=2", f"c{c}-t{temperature}", "output_tok_s")
-            gains.append((spec / base - 1) * 100)
-        xs = [x + (i - 0.5) * (width + 0.04) for x in range(len(concurrency))]
-        ax.bar(xs, gains, width=width, color=theme["series"][i], label=name)
-        for x, g in zip(xs, gains):
-            ax.text(x, g + (1.5 if g >= 0 else -1.5), f"{g:+.0f}%", ha="center", va="bottom" if g >= 0 else "top",
-                    color=theme["ink"], fontsize=9)
-    style(ax, theme, "y")
-    ax.axhline(0, color=theme["axis"], linewidth=0.8)
-    ax.set_xticks(range(len(concurrency)), [f"{c} in flight" for c in concurrency])
-    ax.set_ylabel("change in output tokens/s, %", color=theme["muted"], fontsize=9)
-    ax.set_ylim(-35, 55)
-    legend = ax.legend(frameon=False, fontsize=9, loc="upper right")
-    for text in legend.get_texts():
-        text.set_color(theme["ink"])
-    title(ax, "Speculative decoding: 0.5B drafts 2 tokens, 1.5B verifies", theme)
+def speculation_policies(theme: dict):
+    """Each speculation policy's throughput against plain decode, from 1 to 16 requests in flight."""
+    data = json.loads((RESULTS / "step10-spec.json").read_text())["results"]
+    tok_s = {(r["engine"], r["workload"]): r["output_tok_s"] for r in data}
+    concurrency = [1, 2, 4, 8, 16]
+    series = [("adaptive", "adaptive", 0), ("fixed-2", "fixed k = 2", 1), ("fixed-4", "fixed k = 4", 2)]
+    fig, axes = figure(theme, 9.6, 3.4, columns=2)
+    for ax, temperature, name in zip(axes, ("0", "0.7"), ("greedy", "temperature 0.7")):
+        for policy, label, slot in series:
+            change = [(tok_s[(policy, f"c{c}-t{temperature}")] / tok_s[("none", f"c{c}-t{temperature}")] - 1) * 100
+                      for c in concurrency]
+            x = range(len(concurrency))
+            ax.plot(x, change, color=theme["series"][slot], linewidth=2, marker="o", markersize=7,
+                    markeredgecolor=theme["surface"], markeredgewidth=2, label=label)
+            ax.text(len(concurrency) - 0.85, change[-1], label, va="center", color=theme["ink"], fontsize=8.5)
+        ax.axhline(0, color=theme["reference"], linewidth=1)
+        style(ax, theme, "y")
+        ax.set_xticks(range(len(concurrency)), [str(c) for c in concurrency])
+        ax.set_xlim(-0.3, len(concurrency) + 0.6)
+        ax.set_ylim(-75, 35)
+        ax.set_xlabel("requests in flight", color=theme["muted"], fontsize=9)
+        title(ax, name, theme)
+    axes[0].set_ylabel("output tokens/s vs plain decode, %", color=theme["muted"], fontsize=9)
+    fig.tight_layout(w_pad=3)
+    return fig
+
+
+def adaptive_trace(theme: dict):
+    """Requests in flight and the k the adaptive policy chose, while load goes quiet, busy, quiet."""
+    data = json.loads((RESULTS / "step10-trace.json").read_text())
+    steps = data["stats"]["adaptive_trace"]  # (seconds, batch size, k) per decode step
+    seconds = range(int(steps[-1][0]) + 1)
+    batch, k = [], []
+    for second in seconds:  # 1-second averages: thousands of steps are unreadable as points
+        window = [s for s in steps if second <= s[0] < second + 1]
+        batch.append(sum(s[1] for s in window) / len(window) if window else 0)
+        k.append(sum(s[2] for s in window) / len(window) if window else float("nan"))  # idle: no decision, a gap
+
+    fig, (top, bottom) = plt.subplots(2, 1, figsize=(9.6, 3.8), sharex=True, height_ratios=[1, 1])
+    fig.patch.set_facecolor(theme["surface"])
+    busy_start, busy_end = data["settings"]["phases"][0][0], sum(p[0] for p in data["settings"]["phases"][:2])
+    for ax, values, label, color in ((top, batch, "requests in flight", theme["reference"]),
+                                     (bottom, k, "drafted tokens per step (k)", theme["series"][0])):
+        ax.axvspan(busy_start, busy_end, color=theme["grid"], linewidth=0)
+        ax.plot(list(seconds), values, color=color, linewidth=2)
+        style(ax, theme, "y")
+        ax.set_ylabel(label, color=theme["muted"], fontsize=9)
+    top.text(busy_start + 1, max(batch) * 0.9, "busy: 4 requests/s", color=theme["muted"], fontsize=8.5)
+    bottom.set_ylim(0, 4.2)
+    bottom.set_xlabel("seconds", color=theme["muted"], fontsize=9)
+    title(top, "Adaptive speculation: drafts while quiet, backs off while busy", theme)
+    fig.tight_layout(h_pad=1)
     return fig
 
 
@@ -150,7 +178,13 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     plt.rcParams["font.family"] = ["Segoe UI", "DejaVu Sans", "sans-serif"]
     plt.rcParams["svg.fonttype"] = "none"  # keep text as text: smaller files, selectable
-    for name, chart in (("single-request", single_request), ("batching", batching), ("speculative", speculative)):
+    charts = (
+        ("single-request", single_request),
+        ("batching", batching),
+        ("speculation-policies", speculation_policies),
+        ("adaptive-trace", adaptive_trace),
+    )
+    for name, chart in charts:
         for mode, theme in THEMES.items():
             fig = chart(theme)
             fig.savefig(OUT / f"{name}-{mode}.svg", facecolor=theme["surface"], bbox_inches="tight")
