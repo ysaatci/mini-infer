@@ -6,6 +6,7 @@ from safetensors import safe_open
 
 from mini_infer.attention import AttentionBackend, TritonPagedBackend
 from mini_infer.config import ModelConfig
+from mini_infer.linear import use_triton_linears
 from mini_infer.model import Qwen2ForCausalLM
 
 
@@ -46,4 +47,5 @@ def load_model(
         raise ValueError(f"checkpoint mismatch: missing={missing}, unexpected={unexpected}")
 
     model.tie_weights()
+    use_triton_linears(model)  # after tying, so the output head wraps the shared embedding weight
     return model.eval()
