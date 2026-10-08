@@ -7,6 +7,7 @@ bandwidth. Halving the bytes per weight should nearly halve the time spent readi
 import torch
 from torch import Tensor, nn
 
+from mini_infer.linear import LINEAR_LAYERS
 from mini_infer.matmul import matmul
 from mini_infer.model import Qwen2ForCausalLM
 
@@ -31,7 +32,7 @@ def int8_matmul(x: Tensor, weight: Tensor, scale: Tensor, bias: Tensor | None = 
 class Int8Linear(nn.Module):
     """Drop-in for nn.Linear with int8 weights and per-output-channel scales."""
 
-    def __init__(self, linear: nn.Linear):
+    def __init__(self, linear: nn.Module):
         super().__init__()
         q, scale = quantize_weight(linear.weight.data)
         self.register_buffer("weight", q)
@@ -45,9 +46,6 @@ class Int8Linear(nn.Module):
         return out.view(*x.shape[:-1], -1)
 
 
-QUANTIZED_LAYERS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
-
-
 @torch.no_grad()
 def quantize_model(model: Qwen2ForCausalLM) -> Qwen2ForCausalLM:
     """Replace every decoder linear layer and the output head with Int8Linear, in place.
@@ -58,7 +56,7 @@ def quantize_model(model: Qwen2ForCausalLM) -> Qwen2ForCausalLM:
     """
     for layer in model.model.layers:
         for parent in (layer.self_attn, layer.mlp):
-            for name in QUANTIZED_LAYERS:
+            for name in LINEAR_LAYERS:
                 if hasattr(parent, name):
                     setattr(parent, name, Int8Linear(getattr(parent, name)))
     model.lm_head = Int8Linear(model.lm_head)
