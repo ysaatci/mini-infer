@@ -59,6 +59,7 @@ def single_request(theme: dict):
         ("KV cache", metric("step3-baseline.json", "mini-infer", "in128-out256", "decode_tok_s"), False),
         ("+ paged cache, Triton kernel", metric("step5-single.json", "mini-infer", "in128-out256", "decode_tok_s"), False),
         ("+ CUDA graphs", metric("graphs-single.json", "mini-infer", "in128-out256", "decode_tok_s"), False),
+        ("+ Triton decode matmul", metric("step11b-single.json", "mini-infer", "in128-out256", "decode_tok_s"), False),
         ("+ int8 weights", metric("step8b-single.json", "mini-infer-int8", "in128-out256", "decode_tok_s"), False),
     ]
     fig, ax = figure(theme, 7.2, 3.2)
@@ -85,6 +86,7 @@ def batching(theme: dict):
         ("Continuous batching", metric("step4-mini-infer-offline.json", "mini-infer", "offline-n200", "output_tok_s"), False),
         ("+ paged cache, kernel", metric("step5-mini-infer-offline.json", "mini-infer", "offline-n200", "output_tok_s"), False),
         ("+ CUDA graphs", metric("graphs-mini-infer-offline.json", "mini-infer", "offline-n200", "output_tok_s"), False),
+        ("+ Triton decode matmul", metric("step11b-offline.json", "mini-infer", "offline-n200", "output_tok_s"), False),
         ("+ int8 weights", metric("step8b-int8-offline.json", "mini-infer-int8", "offline-n200", "output_tok_s"), False),
     ]
     labels, values = [r[0] for r in rows][::-1], [r[1] for r in rows][::-1]
@@ -100,7 +102,7 @@ def batching(theme: dict):
 
     rates = [1, 2, 3]
     series = [
-        ("mini-infer bf16", [metric(f"graphs-mini-infer-rate{r}.json", "mini-infer", f"rate{r}-n100", "e2e_p50_s") for r in rates], theme["series"][0]),
+        ("mini-infer bf16", [metric(f"step11b-rate{r}.json", "mini-infer", f"rate{r}-n100", "e2e_p50_s") for r in rates], theme["series"][0]),
         ("mini-infer int8", [metric(f"step8b-int8-rate{r}.json", "mini-infer-int8", f"rate{r}-n100", "e2e_p50_s") for r in rates], theme["series"][1]),
         ("vLLM 0.31 bf16", [metric(f"step5-vllm-rate{r}.json", "vllm", f"rate{r}-n100", "e2e_p50_s") for r in rates], theme["reference"]),
     ]
