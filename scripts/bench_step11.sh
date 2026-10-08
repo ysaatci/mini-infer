@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export HF_HUB_OFFLINE=1
 RUN="bash scripts/wsl_run.sh python"
-OUT=bench/results/step11
+OUT=bench/results/${OUT_PREFIX:-step11}
 
 $RUN -m bench.run --engines mini-infer mini-infer-det --out $OUT-single.json 2>/dev/null | tail -8
 for mode in "" "--deterministic" "" "--deterministic"; do
