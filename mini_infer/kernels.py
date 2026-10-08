@@ -8,7 +8,7 @@ from torch import Tensor
 
 @triton.jit
 def _paged_attention_kernel(
-    Q, K, V, Out, Maxes, Sums, BlockTables, ContextLens, scale, num_splits,
+    Q, K, V, Out, Maxes, Sums, BlockTables, ContextLens, scale, num_splits, split_blocks,
     stride_qb, stride_qh, stride_qt,
     stride_kb, stride_kh, stride_kt,
     stride_tb,
@@ -21,6 +21,7 @@ def _paged_attention_kernel(
     HEAD_DIM: tl.constexpr,
     PRECISION: tl.constexpr,
     SPLIT: tl.constexpr,
+    FIXED_SPLITS: tl.constexpr,  # splits of split_blocks blocks each, instead of num_splits per sequence
 ):
     # One program per (sequence, k/v head, split). Its rows are every (new token, query head) pair that
     # reads this k/v head, so each block of keys/values is loaded once and used QUERY_LEN * GROUP times.
@@ -29,7 +30,19 @@ def _paged_attention_kernel(
     kv_head = tl.program_id(1)
     split = tl.program_id(2)
     context = tl.load(ContextLens + b)  # tokens cached before the new ones
-    seq_len = context + QUERY_LEN
+    num_blocks = tl.cdiv(context + QUERY_LEN, BLOCK_SIZE)
+
+    # Default: each sequence divided into num_splits pieces by its own length, so a short sequence next
+    # to a long one isn't left with empty splits. Fixed: boundaries every split_blocks blocks, so a row's
+    # summation order depends only on its own length, never on the batch (deterministic mode).
+    if FIXED_SPLITS:
+        blocks_per_split = split_blocks
+    else:
+        blocks_per_split = tl.cdiv(num_blocks, num_splits)
+    start = split * blocks_per_split
+    if start >= num_blocks:
+        return  # none of this sequence falls in this split; the merge never reads it
+    end = tl.minimum(start + blocks_per_split, num_blocks)
 
     r = tl.arange(0, ROWS_PAD)
     token = r // GROUP  # which new token this row is
@@ -46,12 +59,6 @@ def _paged_attention_kernel(
     s_sum = tl.zeros([ROWS_PAD], tl.float32)
     acc = tl.zeros([ROWS_PAD, HEAD_DIM], tl.float32)
 
-    # Each sequence is divided by its own length, so a short sequence next to a long one isn't left
-    # with empty splits while the long one's splits do all the work.
-    num_blocks = tl.cdiv(seq_len, BLOCK_SIZE)
-    blocks_per_split = tl.cdiv(num_blocks, num_splits)
-    start = split * blocks_per_split
-    end = tl.minimum(start + blocks_per_split, num_blocks)
     for j in range(start, end):
         block = tl.load(BlockTables + b * stride_tb + j).to(tl.int64)
         offsets = block * stride_kb + kv_head * stride_kh + t[:, None] * stride_kt + d[None, :]
@@ -86,22 +93,29 @@ def _paged_attention_kernel(
         tl.store(Out + out_offsets, (acc / s_sum[:, None]).to(Out.dtype.element_ty), mask=row_mask[:, None])
 
 
-def paged_attention(q: Tensor, k_cache: Tensor, v_cache: Tensor, block_tables: Tensor, context_lens: Tensor) -> Tensor:
+def paged_attention(
+    q: Tensor, k_cache: Tensor, v_cache: Tensor, block_tables: Tensor, context_lens: Tensor, split_blocks: int | None = None
+) -> Tensor:
     """Attention for T new tokens per sequence whose k/v are already in the cache.
 
     q [B, heads, T, D]; k/v_cache [num_blocks, kv_heads, block_size, D] for one layer;
     block_tables [B, max_blocks] int32; context_lens [B] int32, tokens cached before the new ones.
-    Returns [B, heads, T, D].
+    split_blocks: split every this many blocks (batch-invariant), instead of a split count chosen
+    from the batch size. Returns [B, heads, T, D].
     """
     B, H, T, D = q.shape
     _, H_kv, block_size, _ = k_cache.shape
     group = H // H_kv
     q = q.contiguous()
 
-    # Split sequences until there are ~2 programs per GPU core, so small batches don't leave it idle.
-    # Larger batches already have enough programs and skip the split (and its merge) entirely.
-    # Depends only on the batch size, not on lengths, so a CUDA graph captured for a batch size stays valid.
-    splits = triton.cdiv(2 * _num_sms(q.device), B * H_kv)
+    if split_blocks is None:
+        # Split sequences until there are ~2 programs per GPU core, so small batches don't leave it idle.
+        # Larger batches already have enough programs and skip the split (and its merge) entirely.
+        # Depends only on the batch size, not on lengths, so a CUDA graph captured for a batch size stays valid.
+        splits = triton.cdiv(2 * _num_sms(q.device), B * H_kv)
+    else:
+        # Enough fixed-size splits for the widest block table. Programs past a sequence's end return at once.
+        splits = triton.cdiv(block_tables.shape[1], split_blocks)
 
     if splits == 1:
         out = torch.empty_like(q)
@@ -115,8 +129,9 @@ def paged_attention(q: Tensor, k_cache: Tensor, v_cache: Tensor, block_tables: T
         out_strides = out.stride()[:4]
         stat_strides = maxes.stride()[:3]
 
+    shared = dict(BLOCK_SIZE=block_size, HEAD_DIM=D, FIXED_SPLITS=split_blocks is not None)
     _paged_attention_kernel[(B, H_kv, splits)](
-        q, k_cache, v_cache, out, maxes, sums, block_tables, context_lens, D**-0.5, splits,
+        q, k_cache, v_cache, out, maxes, sums, block_tables, context_lens, D**-0.5, splits, split_blocks or 0,
         *q.stride()[:3],
         k_cache.stride(0), k_cache.stride(1), k_cache.stride(2),
         block_tables.stride(0),
@@ -125,52 +140,63 @@ def paged_attention(q: Tensor, k_cache: Tensor, v_cache: Tensor, block_tables: T
         GROUP=group,
         QUERY_LEN=T,
         ROWS_PAD=max(16, triton.next_power_of_2(T * group)),
-        BLOCK_SIZE=block_size,
-        HEAD_DIM=D,
         # fp32 inputs would otherwise be rounded to tf32 inside tl.dot
         PRECISION="ieee" if q.dtype == torch.float32 else "tf32",
         SPLIT=splits > 1,
+        **shared,
     )
     if splits > 1:
         partial = out
         out = torch.empty_like(q)
         _merge_splits_kernel[(B, H * T)](
-            partial, maxes, sums, out, splits, T,
+            partial, maxes, sums, out, context_lens, splits, split_blocks or 0, T,
             *partial.stride()[:4],
             *maxes.stride()[:3],
             *out.stride()[:3],
-            SPLITS_PAD=triton.next_power_of_2(splits),
-            HEAD_DIM=D,
+            **shared,
         )
     return out
 
 
 @triton.jit
 def _merge_splits_kernel(
-    Partial, Maxes, Sums, Out, splits, query_len,
+    Partial, Maxes, Sums, Out, ContextLens, num_splits, split_blocks, query_len,
     stride_pb, stride_ph, stride_pt, stride_ps,
     stride_mb, stride_mh, stride_mt,
     stride_ob, stride_oh, stride_ot,
-    SPLITS_PAD: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
     HEAD_DIM: tl.constexpr,
+    FIXED_SPLITS: tl.constexpr,
 ):
-    """Combine per-split softmax results for one (sequence, head, new token), rescaling each to the
-    overall max, the same correction the main kernel applies block by block. One launch instead of ~9 torch ops."""
+    """Combine one (sequence, head, new token)'s per-split results, left to right, rescaling to the
+    running max as the main kernel does block by block. Only the row's own splits are read, in a fixed
+    order, so the result doesn't depend on how many splits other rows needed."""
     b = tl.program_id(0)
     h = tl.program_id(1) // query_len
     t = tl.program_id(1) % query_len
-    s = tl.arange(0, SPLITS_PAD)
-    d = tl.arange(0, HEAD_DIM)
-    in_range = s < splits
-    stats = b * stride_mb + h * stride_mh + t * stride_mt + s
-    maxes = tl.load(Maxes + stats, mask=in_range, other=float("-inf"))
-    sums = tl.load(Sums + stats, mask=in_range, other=0.0)
-    partial_offsets = b * stride_pb + h * stride_ph + t * stride_pt + s[:, None] * stride_ps + d[None, :]
-    partial = tl.load(Partial + partial_offsets, mask=in_range[:, None], other=0.0)
+    num_blocks = tl.cdiv(tl.load(ContextLens + b) + query_len, BLOCK_SIZE)
+    if FIXED_SPLITS:
+        blocks_per_split = split_blocks
+    else:
+        blocks_per_split = tl.cdiv(num_blocks, num_splits)
+    row_splits = tl.cdiv(num_blocks, blocks_per_split)
 
-    weight = tl.exp(maxes - tl.max(maxes, 0))  # finite max: split 0 always holds key 0, visible to every token
-    out = tl.sum(partial * weight[:, None], 0) / tl.sum(sums * weight, 0)
-    tl.store(Out + b * stride_ob + h * stride_oh + t * stride_ot + d, out.to(Out.dtype.element_ty))
+    d = tl.arange(0, HEAD_DIM)
+    stats = Maxes + b * stride_mb + h * stride_mh + t * stride_mt
+    sums = Sums + b * stride_mb + h * stride_mh + t * stride_mt
+    partial = Partial + b * stride_pb + h * stride_ph + t * stride_pt + d
+    # Split 0 holds key 0, which every token sees, so its max is finite: start from it.
+    m = tl.load(stats)
+    s_sum = tl.load(sums)
+    acc = tl.load(partial)
+    for s in range(1, row_splits):
+        m_s = tl.load(stats + s)
+        m_new = tl.maximum(m, m_s)
+        old, new = tl.exp(m - m_new), tl.exp(m_s - m_new)  # a split this token saw nothing of has m_s = -inf: weight 0
+        s_sum = s_sum * old + tl.load(sums + s) * new
+        acc = acc * old + tl.load(partial + s * stride_ps) * new
+        m = m_new
+    tl.store(Out + b * stride_ob + h * stride_oh + t * stride_ot + d, (acc / s_sum).to(Out.dtype.element_ty))
 
 
 @functools.cache

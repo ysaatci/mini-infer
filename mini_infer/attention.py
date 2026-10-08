@@ -48,13 +48,20 @@ class TritonPagedBackend(TorchPagedBackend):
 
     MAX_KERNEL_ROWS = 64  # new tokens x query heads per k/v head that one kernel program holds
 
+    def __init__(self, split_blocks: int | None = None):
+        # None: split count chosen from the batch size (fastest). A number: split every this many blocks,
+        # so each row's result is independent of the batch (deterministic mode).
+        self.split_blocks = split_blocks
+
     def attend_cached(self, q: Tensor, cache: PagedBatch, layer: int) -> Tensor:
         H, T = q.shape[1], q.shape[2]
         rows = T * H // cache.pool.k.shape[2]
         # tl.dot needs tiles of at least 16, so tiny test block sizes use the reference.
         if rows > self.MAX_KERNEL_ROWS or cache.pool.block_size < 16:
             return super().attend_cached(q, cache, layer)
-        return paged_attention(q, cache.pool.k[layer], cache.pool.v[layer], cache.block_tables, cache.lengths_t)
+        return paged_attention(
+            q, cache.pool.k[layer], cache.pool.v[layer], cache.block_tables, cache.lengths_t, self.split_blocks
+        )
 
 
 def gather_blocks(cache: PagedBatch, layer: int) -> tuple[Tensor, Tensor]:
