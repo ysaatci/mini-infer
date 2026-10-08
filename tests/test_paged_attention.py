@@ -21,10 +21,13 @@ LARGE_BATCH = [random.Random(1).randint(1, 300) for _ in range(64)]
 
 
 # 1 new token: decode. 5 new tokens: speculative verification with k = 4 drafted tokens.
+# Default split count from the batch size, or fixed splits every 4 blocks (deterministic mode; small, so
+# test sequences span many splits).
+@pytest.mark.parametrize("split_blocks", [None, 4], ids=["batch-splits", "fixed-splits"])
 @pytest.mark.parametrize("query_len", [1, 5], ids=["decode", "verify"])
 @pytest.mark.parametrize("seq_lens", [SMALL_BATCH, LARGE_BATCH], ids=["split", "no-split"])
 @pytest.mark.parametrize("dtype, tol", [(torch.float32, 1e-5), (torch.bfloat16, 2e-2)])
-def test_triton_attention_matches_reference(query_len, seq_lens, dtype, tol):
+def test_triton_attention_matches_reference(split_blocks, query_len, seq_lens, dtype, tol):
     torch.manual_seed(0)
     pool = PagedKVPool(CONFIG, num_blocks=1400, block_size=16, device="cuda", dtype=dtype)
     random.Random(0).shuffle(pool._free)  # scattered, out-of-order blocks, as after many requests come and go
@@ -39,5 +42,5 @@ def test_triton_attention_matches_reference(query_len, seq_lens, dtype, tol):
     cache = pool.view(seq_ids)
     q = torch.randn(len(seq_lens), CONFIG.num_heads, query_len, CONFIG.head_dim, device="cuda", dtype=dtype)
     expected = TorchPagedBackend().attend_cached(q, cache, layer=0)
-    actual = TritonPagedBackend().attend_cached(q, cache, layer=0)
+    actual = TritonPagedBackend(split_blocks).attend_cached(q, cache, layer=0)
     torch.testing.assert_close(actual, expected, atol=tol, rtol=tol)
