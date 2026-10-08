@@ -40,9 +40,11 @@ def arrivals(seed: int = 0) -> list[float]:
         phase_start += duration
     return times
 
-def drive(engine: LLMEngine, prompts: list[list[int]], arrival_s: list[float], stop_ids) -> dict[str, list[float]]:
+def drive(engine: LLMEngine, prompts: list[list[int]], arrival_s: list[float], stop_ids):
+    """Returns token arrival times per request, and per decode step (seconds, batch size, k)."""
     pending = list(enumerate(arrival_s))
     token_times: dict[str, list[float]] = defaultdict(list)
+    steps: list[tuple[float, int, int]] = []
     start = time.perf_counter()
     while pending or engine.has_unfinished():
         now = time.perf_counter() - start
@@ -54,7 +56,11 @@ def drive(engine: LLMEngine, prompts: list[list[int]], arrival_s: list[float], s
             continue
         for out in engine.step():
             token_times[out.request_id].append(time.perf_counter() - start)
-    return token_times
+        batch = engine.last_batch
+        if batch.decode:
+            steps.append((time.perf_counter() - start, len(batch.decode), batch.lookahead - 1))
+    return token_times, steps
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -89,14 +95,12 @@ def main() -> None:
     rows, trace = [], []
     for name, policy in policies.items():
         engine.speculative.policy = policy
-        decisions_before = len(adaptive.decisions)
-        start = time.perf_counter()
-        token_times = drive(engine, prompts, arrival_s, stop_ids)
+        token_times, steps = drive(engine, prompts, arrival_s, stop_ids)
         metrics = summarize_batch(token_times, arrivals_by_id, max(t[-1] for t in token_times.values()), 0)
         rows.append((name, "quiet-busy-quiet", metrics))
         print(f"{name:10s} median request {metrics.e2e_p50_s:.2f} s, p99 {metrics.e2e_p99_s:.2f} s", flush=True)
         if name == "adaptive":
-            trace = [(t - start, batch, k) for t, batch, k in list(adaptive.decisions)[decisions_before:]]
+            trace = steps  # every decode step: above 16 requests k is 0 by rule (plain decode)
             print(f"  k chosen: {dict(sorted(Counter(k for *_, k in trace).items()))}")
 
     print("\n" + markdown_table(rows))
