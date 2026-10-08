@@ -1,0 +1,395 @@
+{
+  "environment": {
+    "time": "2026-10-07T23:54:02+00:00",
+    "commit": "92982ed",
+    "gpu": "NVIDIA GeForce RTX 5050 Laptop GPU",
+    "torch": "2.11.0+cu128"
+  },
+  "settings": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "draft_model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "policies": [
+      "none",
+      "fixed-2",
+      "fixed-4",
+      "adaptive"
+    ],
+    "concurrency": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "temperatures": [
+      0.0,
+      0.7
+    ],
+    "kv_cache_gb": 1.41,
+    "int8": false,
+    "out": "bench/results/step10-spec.json"
+  },
+  "results": [
+    {
+      "engine": "none",
+      "workload": "c1-t0",
+      "output_tok_s": 71.06919774648033,
+      "decode_tok_s_p50": 71.60213235784533,
+      "ttft_p50_ms": 30.687814999964758,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c1-t0",
+      "output_tok_s": 83.60233554092527,
+      "decode_tok_s_p50": 83.12158808940973,
+      "ttft_p50_ms": 26.362657000049694,
+      "acceptance": 0.7230366492146597,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c1-t0",
+      "output_tok_s": 83.90113796398477,
+      "decode_tok_s_p50": 83.2591102284861,
+      "ttft_p50_ms": 29.73310999993828,
+      "acceptance": 0.594200288184438,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c1-t0",
+      "output_tok_s": 83.22000760790442,
+      "decode_tok_s_p50": 81.87614271129499,
+      "ttft_p50_ms": 30.947310999977162,
+      "acceptance": 0.6465610761553482,
+      "mean_k": 2.701641266119578
+    },
+    {
+      "engine": "none",
+      "workload": "c2-t0",
+      "output_tok_s": 165.91630659592616,
+      "decode_tok_s_p50": 84.57338753777924,
+      "ttft_p50_ms": 25.021756999876743,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c2-t0",
+      "output_tok_s": 167.1403567896802,
+      "decode_tok_s_p50": 83.92923522426784,
+      "ttft_p50_ms": 24.702982999997403,
+      "acceptance": 0.7118556701030928,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c2-t0",
+      "output_tok_s": 165.56284187790578,
+      "decode_tok_s_p50": 80.04065242187932,
+      "ttft_p50_ms": 24.425708999842755,
+      "acceptance": 0.5775983146067416,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c2-t0",
+      "output_tok_s": 159.07979951822756,
+      "decode_tok_s_p50": 82.9840847560015,
+      "ttft_p50_ms": 26.049790000115536,
+      "acceptance": 0.6436388508891929,
+      "mean_k": 0.3792033109156751
+    },
+    {
+      "engine": "none",
+      "workload": "c4-t0",
+      "output_tok_s": 304.7390892795274,
+      "decode_tok_s_p50": 81.1531766685572,
+      "ttft_p50_ms": 36.918261999971946,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c4-t0",
+      "output_tok_s": 296.27234524365036,
+      "decode_tok_s_p50": 78.1659810176377,
+      "ttft_p50_ms": 32.26343400001497,
+      "acceptance": 0.7118514750762971,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c4-t0",
+      "output_tok_s": 274.6330258142226,
+      "decode_tok_s_p50": 72.40637741636439,
+      "ttft_p50_ms": 32.81467600004362,
+      "acceptance": 0.5780479210711769,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c4-t0",
+      "output_tok_s": 305.7636437023112,
+      "decode_tok_s_p50": 81.87108148459123,
+      "ttft_p50_ms": 34.08315000001494,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "none",
+      "workload": "c8-t0",
+      "output_tok_s": 525.2904257649691,
+      "decode_tok_s_p50": 79.0575342414366,
+      "ttft_p50_ms": 32.74419900003522,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c8-t0",
+      "output_tok_s": 395.4308473413252,
+      "decode_tok_s_p50": 57.55845072650126,
+      "ttft_p50_ms": 32.5255569998717,
+      "acceptance": 0.7148760330578512,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c8-t0",
+      "output_tok_s": 383.7473494472398,
+      "decode_tok_s_p50": 57.23478463124137,
+      "ttft_p50_ms": 35.75288399997589,
+      "acceptance": 0.5887096774193549,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c8-t0",
+      "output_tok_s": 466.8164435595609,
+      "decode_tok_s_p50": 69.9948397539624,
+      "ttft_p50_ms": 29.66582399994877,
+      "acceptance": 0.6524390243902439,
+      "mean_k": 0.035346097201767304
+    },
+    {
+      "engine": "none",
+      "workload": "c16-t0",
+      "output_tok_s": 727.2810530947744,
+      "decode_tok_s_p50": 66.18010498949694,
+      "ttft_p50_ms": 495.1035579999825,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c16-t0",
+      "output_tok_s": 626.8992125328524,
+      "decode_tok_s_p50": 55.04977102252475,
+      "ttft_p50_ms": 438.06203099984486,
+      "acceptance": 0.7166140904311251,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c16-t0",
+      "output_tok_s": 580.1605763634481,
+      "decode_tok_s_p50": 50.38314289189111,
+      "ttft_p50_ms": 446.40215499998703,
+      "acceptance": 0.5874053682037165,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c16-t0",
+      "output_tok_s": 777.4217338295192,
+      "decode_tok_s_p50": 73.82020313603687,
+      "ttft_p50_ms": 450.07626799997524,
+      "acceptance": 0.0,
+      "mean_k": 0.002331002331002331
+    },
+    {
+      "engine": "none",
+      "workload": "c1-t0.7",
+      "output_tok_s": 67.23486094249158,
+      "decode_tok_s_p50": 67.55966928911371,
+      "ttft_p50_ms": 29.218258999890168,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c1-t0.7",
+      "output_tok_s": 75.88717088983418,
+      "decode_tok_s_p50": 74.96385901659866,
+      "ttft_p50_ms": 29.10888899987185,
+      "acceptance": 0.7168865435356201,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c1-t0.7",
+      "output_tok_s": 74.7361217147702,
+      "decode_tok_s_p50": 73.82422304760719,
+      "ttft_p50_ms": 25.314416999890454,
+      "acceptance": 0.5783839779005525,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c1-t0.7",
+      "output_tok_s": 69.77465839723031,
+      "decode_tok_s_p50": 68.17188324799966,
+      "ttft_p50_ms": 36.797363000005134,
+      "acceptance": 0.67,
+      "mean_k": 0.4050632911392405
+    },
+    {
+      "engine": "none",
+      "workload": "c2-t0.7",
+      "output_tok_s": 149.63602012334246,
+      "decode_tok_s_p50": 77.18958117680478,
+      "ttft_p50_ms": 27.93054700009634,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c2-t0.7",
+      "output_tok_s": 149.7790602332861,
+      "decode_tok_s_p50": 77.20073760325474,
+      "ttft_p50_ms": 26.310852999813505,
+      "acceptance": 0.7143584521384929,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c2-t0.7",
+      "output_tok_s": 145.77289218347937,
+      "decode_tok_s_p50": 74.83016748820242,
+      "ttft_p50_ms": 29.75171799994314,
+      "acceptance": 0.5833892617449664,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c2-t0.7",
+      "output_tok_s": 151.36339040826934,
+      "decode_tok_s_p50": 76.44705049311419,
+      "ttft_p50_ms": 32.27383199987344,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "none",
+      "workload": "c4-t0.7",
+      "output_tok_s": 265.3907342955489,
+      "decode_tok_s_p50": 74.74392490871642,
+      "ttft_p50_ms": 44.3743060000088,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c4-t0.7",
+      "output_tok_s": 258.7485177556404,
+      "decode_tok_s_p50": 71.25028182783637,
+      "ttft_p50_ms": 33.18023700012418,
+      "acceptance": 0.7362637362637363,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c4-t0.7",
+      "output_tok_s": 243.56376222347785,
+      "decode_tok_s_p50": 66.20822784608731,
+      "ttft_p50_ms": 25.724246999971,
+      "acceptance": 0.5876487053883834,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c4-t0.7",
+      "output_tok_s": 283.3960578505877,
+      "decode_tok_s_p50": 75.99703683015653,
+      "ttft_p50_ms": 26.5860239999256,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "none",
+      "workload": "c8-t0.7",
+      "output_tok_s": 483.7209913902285,
+      "decode_tok_s_p50": 73.07508169523378,
+      "ttft_p50_ms": 28.12572600009844,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c8-t0.7",
+      "output_tok_s": 372.64287519882424,
+      "decode_tok_s_p50": 54.96726152612706,
+      "ttft_p50_ms": 49.12289200001396,
+      "acceptance": 0.7089882121807466,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c8-t0.7",
+      "output_tok_s": 342.7939529105001,
+      "decode_tok_s_p50": 48.68709135568749,
+      "ttft_p50_ms": 32.863810000208105,
+      "acceptance": 0.560823754789272,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c8-t0.7",
+      "output_tok_s": 478.8666136078831,
+      "decode_tok_s_p50": 72.0224447755217,
+      "ttft_p50_ms": 47.552786999858654,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "none",
+      "workload": "c16-t0.7",
+      "output_tok_s": 673.817338349869,
+      "decode_tok_s_p50": 63.99930093491198,
+      "ttft_p50_ms": 431.7159089998768,
+      "acceptance": 0.0,
+      "mean_k": 0
+    },
+    {
+      "engine": "fixed-2",
+      "workload": "c16-t0.7",
+      "output_tok_s": 497.67528077919803,
+      "decode_tok_s_p50": 42.05947090375079,
+      "ttft_p50_ms": 462.1553249999124,
+      "acceptance": 0.6994756911344138,
+      "mean_k": 2
+    },
+    {
+      "engine": "fixed-4",
+      "workload": "c16-t0.7",
+      "output_tok_s": 201.69804688343666,
+      "decode_tok_s_p50": 13.156418736837878,
+      "ttft_p50_ms": 403.2135099998868,
+      "acceptance": 0.5611111111111111,
+      "mean_k": 4
+    },
+    {
+      "engine": "adaptive",
+      "workload": "c16-t0.7",
+      "output_tok_s": 689.9010673110071,
+      "decode_tok_s_p50": 63.92558923434411,
+      "ttft_p50_ms": 432.3188849998587,
+      "acceptance": 0.0,
+      "mean_k": 0
+    }
+  ],
+  "stats": {}
+}
