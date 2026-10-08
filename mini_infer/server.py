@@ -46,7 +46,7 @@ def create_app(engine: AsyncEngine, tokenizer, model_name: str, stop_ids: frozen
         max_new_tokens = request.requested_max_tokens() or budget
         if budget < 1 or max_new_tokens > budget:
             raise HTTPException(400, f"prompt ({len(prompt_ids)} tokens) + max_tokens exceeds the {token_limit}-token limit")
-        params = SamplingParams(request.temperature, request.top_p)
+        params = SamplingParams(request.temperature, request.top_p, request.seed)
         return engine.generate(prompt_ids, max_new_tokens, params, frozenset() if request.ignore_eos else stop_ids)
 
     @app.get("/v1/models")
@@ -133,6 +133,7 @@ def build_app(
     draft_model: str | None = None,
     num_draft_tokens: int | None = None,
     int8: bool = False,
+    deterministic: bool = False,
 ) -> FastAPI:
     model_dir = resolve_model_dir(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
@@ -144,7 +145,9 @@ def build_app(
     num_blocks = PagedKVPool.blocks_for_memory(model.config, int(kv_cache_gb * 1e9), DEFAULT_BLOCK_SIZE, torch.bfloat16)
     policy = FixedDraftPolicy(num_draft_tokens) if num_draft_tokens else AdaptiveDraftPolicy()
     speculative = SpeculativeConfig(load(draft_model), policy) if draft_model else None
-    engine = LLMEngine(model, num_blocks, max_batch_size, use_cuda_graphs=cuda_graphs, speculative=speculative)
+    engine = LLMEngine(
+        model, num_blocks, max_batch_size, use_cuda_graphs=cuda_graphs, speculative=speculative, deterministic=deterministic
+    )
     engine.warmup()
     return create_app(AsyncEngine(engine), tokenizer, model_name, stop_ids)
 
@@ -160,6 +163,7 @@ def main() -> None:
     parser.add_argument("--draft-model", help="enables speculative decoding, e.g. Qwen/Qwen2.5-0.5B-Instruct")
     parser.add_argument("--num-draft-tokens", type=int, help="fixed k; by default k adapts to load each step")
     parser.add_argument("--int8", action="store_true", help="int8 weights (target and draft)")
+    parser.add_argument("--deterministic", action="store_true", help="output independent of other requests")
     args = parser.parse_args()
     app = build_app(
         args.model,
@@ -169,6 +173,7 @@ def main() -> None:
         draft_model=args.draft_model,
         num_draft_tokens=args.num_draft_tokens,
         int8=args.int8,
+        deterministic=args.deterministic,
     )
     uvicorn.run(app, host=args.host, port=args.port)
 

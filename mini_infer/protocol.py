@@ -17,6 +17,7 @@ class _GenerationRequest(BaseModel):
     n: int = Field(1, ge=1, le=1)  # one completion per request
     stream: bool = False
     ignore_eos: bool = False  # extension (vLLM has it too): benchmarks need fixed output lengths
+    seed: int | None = None  # same seed and prompt: same sampled output (fully, with --deterministic)
 
     def requested_max_tokens(self) -> int | None:
         return self.max_completion_tokens or self.max_tokens
